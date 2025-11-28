@@ -1,0 +1,21 @@
+# Copy this file to terraform.tfvars and adjust the values before running Terraform.
+
+subscription_id      = "00000000-0000-0000-0000-000000000000"
+tenant_id            = "00000000-0000-0000-0000-000000000000"
+environment_name     = "student-app"
+location             = "francecentral"
+vm_size              = "Standard_B1ms"
+vm_admin_username    = "azureuser"
+admin_ssh_public_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAISAMPLEKEY user@example"
+
+# VM networking
+vm_http_port = 80
+
+# Networking
+allowed_admin_cidrs = [
+  "203.0.113.10/32",
+]
+
+# Database credentials (use a stronger password in your local tfvars!)
+db_admin_username = "pgadmin"
+db_admin_password = "ChangeMe123!"
