@@ -7,7 +7,10 @@ This folder contains an opinionated Terraform setup that provisions everything n
 - Resource Group scoped to a single region (default: France Central)
 - Virtual network with a subnet and a lightweight NSG (HTTP/HTTPS always open, SSH restricted to the CIDRs you provide)
 - Public IP, NIC, and a small Ubuntu-based VM (default size `Standard_B1ms`) ready for you to configure manually (install Docker, agents, etc.)
+- Optional Recovery Services vault + daily VM backup policy (enabled by default) so you always have rolling restore points without paying extra outside the free tier
+- Azure Automation account (only if needed) with schedules to start the VM at 07:00 and stop it at 19:00 so you burn roughly half the compute hours; times/timezone can be changed or disabled via variables
 - Azure Database for PostgreSQL Flexible Server on the Basic SKU with backups enabled*
+- Automation runbook (optional) that triggers a managed PostgreSQL backup every evening to add an extra safety net on top of point-in-time restore
 - Firewall rules so the VM and Azure services can reach the database securely
 - Opinionated outputs (SSH command, DB connection string, etc.) to simplify hand-off to application teams
 
@@ -47,8 +50,11 @@ This folder contains an opinionated Terraform setup that provisions everything n
 | `environment_name` | Prefix for every Azure resource (no private app names are baked in). |
 | `admin_ssh_public_key` | SSH key allowed on the VM; generate one with `ssh-keygen` if you don't have it yet. |
 | `vm_http_port` | External HTTP port opened on the VM. HTTPS is controlled through `vm_https_port`. |
+| `vm_schedule_*` | Toggle + timezone/start/stop times for the Automation schedule that starts the VM in the morning and shuts it down in the evening. |
 | `allowed_admin_cidrs` | IPv4 CIDR blocks with SSH access. Leave empty to disable SSH from the internet and rely on privileged Azure Bastion or similar services. |
 | `db_admin_*` settings | Credentials + sizing for the PostgreSQL flexible server. |
+| `vm_backup_*` | Enables Azure Backup + retention/timezone knobs for the VM Recovery Services vault policy. |
+| `db_backup_*` | Controls the daily Automation job that triggers a managed PostgreSQL backup (set `db_backup_enabled = false` if you only want the default PITR window). |
 
 Check `terraform.tfvars.example` for a quick starting point.
 
@@ -58,6 +64,7 @@ Check `terraform.tfvars.example` for a quick starting point.
 - Networking stays simple on purpose: no load balancers, no private DNS. Add them once you exceed the free tiers.
 - Database firewall currently allows only the VM public IP and the special `0.0.0.0` rule needed for Azure services (required for provisioning). If you need developer laptops to reach the DB directly, create extra firewall rules in Terraform or manually after apply.
 - Destroying the stack (`terraform destroy`) will delete the DB as well—export backups before running it in production-like setups.
+- The Automation schedules and backup policies are optional; disable them via the tfvars if you plan to keep the VM always-on or prefer handling backups manually.
 
 ### Suggested manual bootstrap (optional)
 
