@@ -8,8 +8,12 @@ vm_size              = "Standard_B1ms"
 vm_admin_username    = "azureuser"
 admin_ssh_public_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAISAMPLEKEY user@example"
 
-# VM networking
-vm_http_port = 80
+# VM networking & schedule
+vm_http_port            = 80
+vm_schedule_enabled     = true
+vm_schedule_timezone    = "Europe/Rome"
+vm_schedule_start_time  = "07:00"
+vm_schedule_stop_time   = "19:00"
 
 # Networking
 allowed_admin_cidrs = [
@@ -19,3 +23,13 @@ allowed_admin_cidrs = [
 # Database credentials (use a stronger password in your local tfvars!)
 db_admin_username = "pgadmin"
 db_admin_password = "ChangeMe123!"
+
+# Backup knobs
+vm_backup_enabled        = true
+vm_backup_time           = "20:00"
+vm_backup_retention_days = 7
+vm_backup_timezone       = "Europe/Rome"
+
+db_backup_enabled  = true
+db_backup_time     = "20:30"
+db_backup_timezone = "Europe/Rome"

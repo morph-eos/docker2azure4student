@@ -60,6 +60,30 @@ variable "vm_https_port" {
   default     = 443
 }
 
+variable "vm_schedule_enabled" {
+  description = "If true, automatically stop/start the VM on a daily schedule to save costs."
+  type        = bool
+  default     = true
+}
+
+variable "vm_schedule_timezone" {
+  description = "Timezone used for the VM daily schedule (IANA/Windows compatible)."
+  type        = string
+  default     = "Europe/Rome"
+}
+
+variable "vm_schedule_start_time" {
+  description = "Time of day (HH:MM) when the VM should be started."
+  type        = string
+  default     = "07:00"
+}
+
+variable "vm_schedule_stop_time" {
+  description = "Time of day (HH:MM) when the VM should be stopped."
+  type        = string
+  default     = "19:00"
+}
+
 variable "db_admin_username" {
   description = "Username for the managed PostgreSQL server."
   type        = string
@@ -88,6 +112,48 @@ variable "db_backup_retention_days" {
   description = "Number of days to retain automatic backups."
   type        = number
   default     = 7
+}
+
+variable "vm_backup_enabled" {
+  description = "Enable Azure Backup (Recovery Services Vault) for the VM."
+  type        = bool
+  default     = true
+}
+
+variable "vm_backup_time" {
+  description = "Time of day (HH:MM) when the VM backup should run."
+  type        = string
+  default     = "20:00"
+}
+
+variable "vm_backup_retention_days" {
+  description = "How many daily recovery points to keep for the VM backup policy."
+  type        = number
+  default     = 7
+}
+
+variable "vm_backup_timezone" {
+  description = "Timezone used by the VM backup policy schedule."
+  type        = string
+  default     = "Europe/Rome"
+}
+
+variable "db_backup_enabled" {
+  description = "Enable Automation runbook that triggers an on-demand PostgreSQL backup once per day."
+  type        = bool
+  default     = true
+}
+
+variable "db_backup_time" {
+  description = "Time of day (HH:MM) when the on-demand PostgreSQL backup should run."
+  type        = string
+  default     = "20:30"
+}
+
+variable "db_backup_timezone" {
+  description = "Timezone for the PostgreSQL backup automation schedule."
+  type        = string
+  default     = "Europe/Rome"
 }
 
 variable "allowed_admin_cidrs" {

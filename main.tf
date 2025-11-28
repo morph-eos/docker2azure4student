@@ -1,3 +1,5 @@
+data "azurerm_client_config" "current" {}
+
 resource "azurerm_resource_group" "main" {
   name     = "${local.prefix}-rg"
   location = var.location
@@ -9,6 +11,8 @@ resource "random_string" "db_suffix" {
   special = false
   upper   = false
 }
+
+resource "time_static" "schedule_anchor" {}
 
 resource "azurerm_virtual_network" "main" {
   name                = "${local.prefix}-vnet"
@@ -141,6 +145,251 @@ resource "azurerm_linux_virtual_machine" "app" {
   }
 
   tags = merge(var.tags, { component = "compute" })
+}
+
+resource "azurerm_recovery_services_vault" "main" {
+  count               = var.vm_backup_enabled ? 1 : 0
+  name                = "${local.prefix}-rsv"
+  location            = var.location
+  resource_group_name = azurerm_resource_group.main.name
+  sku                 = "Standard"
+  soft_delete_enabled = true
+
+  tags = merge(var.tags, { component = "backup" })
+}
+
+resource "azurerm_backup_policy_vm" "daily" {
+  count               = var.vm_backup_enabled ? 1 : 0
+  name                = "${local.prefix}-vm-policy"
+  resource_group_name = azurerm_resource_group.main.name
+  recovery_vault_name = azurerm_recovery_services_vault.main[0].name
+  timezone            = var.vm_backup_timezone
+
+  backup {
+    frequency = "Daily"
+    time      = var.vm_backup_time
+  }
+
+  retention_daily {
+    count = var.vm_backup_retention_days
+  }
+}
+
+resource "azurerm_backup_protected_vm" "app" {
+  count               = var.vm_backup_enabled ? 1 : 0
+  resource_group_name = azurerm_resource_group.main.name
+  recovery_vault_name = azurerm_recovery_services_vault.main[0].name
+  source_vm_id        = azurerm_linux_virtual_machine.app.id
+  backup_policy_id    = azurerm_backup_policy_vm.daily[0].id
+}
+
+resource "azurerm_automation_account" "ops" {
+  count               = local.automation_required ? 1 : 0
+  name                = "${local.prefix}-aa"
+  location            = var.location
+  resource_group_name = azurerm_resource_group.main.name
+  sku_name            = "Basic"
+
+  identity {
+    type = "SystemAssigned"
+  }
+
+  tags = merge(var.tags, { component = "automation" })
+}
+
+resource "azurerm_role_assignment" "automation_rg" {
+  count                = local.automation_required ? 1 : 0
+  scope                = azurerm_resource_group.main.id
+  role_definition_name = "Contributor"
+  principal_id         = azurerm_automation_account.ops[0].identity[0].principal_id
+}
+
+resource "azurerm_automation_module" "az_accounts" {
+  count                   = local.automation_required ? 1 : 0
+  name                    = "Az.Accounts"
+  resource_group_name     = azurerm_resource_group.main.name
+  automation_account_name = azurerm_automation_account.ops[0].name
+
+  module_link {
+    uri = "https://www.powershellgallery.com/api/v2/package/Az.Accounts/2.12.3"
+  }
+}
+
+resource "azurerm_automation_module" "az_compute" {
+  count                   = local.automation_required ? 1 : 0
+  name                    = "Az.Compute"
+  resource_group_name     = azurerm_resource_group.main.name
+  automation_account_name = azurerm_automation_account.ops[0].name
+
+  module_link {
+    uri = "https://www.powershellgallery.com/api/v2/package/Az.Compute/10.2.0"
+  }
+}
+
+resource "azurerm_automation_module" "az_postgresql" {
+  count                   = var.db_backup_enabled ? 1 : 0
+  name                    = "Az.PostgreSql"
+  resource_group_name     = azurerm_resource_group.main.name
+  automation_account_name = azurerm_automation_account.ops[0].name
+
+  module_link {
+    uri = "https://www.powershellgallery.com/api/v2/package/Az.PostgreSql/2.2.0"
+  }
+}
+
+resource "azurerm_automation_runbook" "vm_start" {
+  count                   = var.vm_schedule_enabled ? 1 : 0
+  name                    = "${local.prefix}-start-vm"
+  location                = var.location
+  resource_group_name     = azurerm_resource_group.main.name
+  automation_account_name = azurerm_automation_account.ops[0].name
+  log_verbose             = true
+  log_progress            = true
+  runbook_type            = "PowerShell"
+  content                 = <<-POWERSHELL
+    param(
+      [string]$ResourceGroupName,
+      [string]$VmName
+    )
+
+    Connect-AzAccount -Identity | Out-Null
+    Start-AzVM -ResourceGroupName $ResourceGroupName -Name $VmName
+  POWERSHELL
+
+  depends_on = [
+    azurerm_automation_module.az_accounts[0],
+    azurerm_automation_module.az_compute[0]
+  ]
+}
+
+resource "azurerm_automation_runbook" "vm_stop" {
+  count                   = var.vm_schedule_enabled ? 1 : 0
+  name                    = "${local.prefix}-stop-vm"
+  location                = var.location
+  resource_group_name     = azurerm_resource_group.main.name
+  automation_account_name = azurerm_automation_account.ops[0].name
+  log_verbose             = true
+  log_progress            = true
+  runbook_type            = "PowerShell"
+  content                 = <<-POWERSHELL
+    param(
+      [string]$ResourceGroupName,
+      [string]$VmName
+    )
+
+    Connect-AzAccount -Identity | Out-Null
+    Stop-AzVM -ResourceGroupName $ResourceGroupName -Name $VmName -Force
+  POWERSHELL
+
+  depends_on = [
+    azurerm_automation_module.az_accounts[0],
+    azurerm_automation_module.az_compute[0]
+  ]
+}
+
+resource "azurerm_automation_schedule" "vm_start" {
+  count                   = var.vm_schedule_enabled ? 1 : 0
+  name                    = "${local.prefix}-vm-start"
+  resource_group_name     = azurerm_resource_group.main.name
+  automation_account_name = azurerm_automation_account.ops[0].name
+  frequency               = "Day"
+  interval                = 1
+  timezone                = var.vm_schedule_timezone
+  start_time              = local.vm_start_timestamp
+}
+
+resource "azurerm_automation_schedule" "vm_stop" {
+  count                   = var.vm_schedule_enabled ? 1 : 0
+  name                    = "${local.prefix}-vm-stop"
+  resource_group_name     = azurerm_resource_group.main.name
+  automation_account_name = azurerm_automation_account.ops[0].name
+  frequency               = "Day"
+  interval                = 1
+  timezone                = var.vm_schedule_timezone
+  start_time              = local.vm_stop_timestamp
+}
+
+resource "azurerm_automation_job_schedule" "vm_start" {
+  count                   = var.vm_schedule_enabled ? 1 : 0
+  resource_group_name     = azurerm_resource_group.main.name
+  automation_account_name = azurerm_automation_account.ops[0].name
+  runbook_name            = azurerm_automation_runbook.vm_start[0].name
+  schedule_name           = azurerm_automation_schedule.vm_start[0].name
+
+  parameters = {
+    ResourceGroupName = azurerm_resource_group.main.name
+    VmName            = azurerm_linux_virtual_machine.app.name
+  }
+}
+
+resource "azurerm_automation_job_schedule" "vm_stop" {
+  count                   = var.vm_schedule_enabled ? 1 : 0
+  resource_group_name     = azurerm_resource_group.main.name
+  automation_account_name = azurerm_automation_account.ops[0].name
+  runbook_name            = azurerm_automation_runbook.vm_stop[0].name
+  schedule_name           = azurerm_automation_schedule.vm_stop[0].name
+
+  parameters = {
+    ResourceGroupName = azurerm_resource_group.main.name
+    VmName            = azurerm_linux_virtual_machine.app.name
+  }
+}
+
+resource "azurerm_automation_runbook" "db_backup" {
+  count                   = var.db_backup_enabled ? 1 : 0
+  name                    = "${local.prefix}-db-backup"
+  location                = var.location
+  resource_group_name     = azurerm_resource_group.main.name
+  automation_account_name = azurerm_automation_account.ops[0].name
+  log_verbose             = true
+  log_progress            = true
+  runbook_type            = "PowerShell"
+  content                 = <<-POWERSHELL
+    param(
+      [string]$SubscriptionId,
+      [string]$ResourceGroupName,
+      [string]$ServerName
+    )
+
+    Connect-AzAccount -Identity | Out-Null
+
+    $timestamp = Get-Date -Format "yyyyMMddHHmmss"
+    $uri = "/subscriptions/$SubscriptionId/resourceGroups/$ResourceGroupName/providers/Microsoft.DBforPostgreSQL/flexibleServers/$ServerName/createBackup?api-version=2024-08-01-preview"
+    $body = @{ backup = @{ backupName = "manual-$timestamp" } } | ConvertTo-Json -Depth 5
+
+    Invoke-AzRestMethod -Method POST -Path $uri -Payload $body | Out-Null
+    Write-Output "Backup manuale creato: manual-$timestamp"
+  POWERSHELL
+
+  depends_on = [
+    azurerm_automation_module.az_accounts[0],
+    azurerm_automation_module.az_postgresql[0]
+  ]
+}
+
+resource "azurerm_automation_schedule" "db_backup" {
+  count                   = var.db_backup_enabled ? 1 : 0
+  name                    = "${local.prefix}-db-backup"
+  resource_group_name     = azurerm_resource_group.main.name
+  automation_account_name = azurerm_automation_account.ops[0].name
+  frequency               = "Day"
+  interval                = 1
+  timezone                = var.db_backup_timezone
+  start_time              = local.db_backup_timestamp
+}
+
+resource "azurerm_automation_job_schedule" "db_backup" {
+  count                   = var.db_backup_enabled ? 1 : 0
+  resource_group_name     = azurerm_resource_group.main.name
+  automation_account_name = azurerm_automation_account.ops[0].name
+  runbook_name            = azurerm_automation_runbook.db_backup[0].name
+  schedule_name           = azurerm_automation_schedule.db_backup[0].name
+
+  parameters = {
+    SubscriptionId    = local.subscription_id
+    ResourceGroupName = azurerm_resource_group.main.name
+    ServerName        = azurerm_postgresql_flexible_server.db.name
+  }
 }
 
 resource "azurerm_postgresql_flexible_server" "db" {
