@@ -7,6 +7,7 @@ location             = "francecentral"
 vm_size              = "Standard_B1ms"
 vm_admin_username    = "azureuser"
 admin_ssh_public_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAISAMPLEKEY user@example"
+automation_location  = "eastus"
 
 # VM networking & schedule
 vm_http_port            = 80
@@ -23,6 +24,7 @@ allowed_admin_cidrs = [
 # Database credentials (use a stronger password in your local tfvars!)
 db_admin_username = "pgadmin"
 db_admin_password = "ChangeMe123!"
+db_zone           = "1"
 
 # Backup knobs
 vm_backup_enabled        = true

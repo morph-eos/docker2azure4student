@@ -60,6 +60,12 @@ variable "vm_https_port" {
   default     = 443
 }
 
+variable "automation_location" {
+  description = "Region used to host Azure Automation (defaults to an allowed Student-plan region)."
+  type        = string
+  default     = "eastus"
+}
+
 variable "vm_schedule_enabled" {
   description = "If true, automatically stop/start the VM on a daily schedule to save costs."
   type        = bool
@@ -112,6 +118,12 @@ variable "db_backup_retention_days" {
   description = "Number of days to retain automatic backups."
   type        = number
   default     = 7
+}
+
+variable "db_zone" {
+  description = "Availability zone used by the PostgreSQL flexible server."
+  type        = string
+  default     = "1"
 }
 
 variable "vm_backup_enabled" {
