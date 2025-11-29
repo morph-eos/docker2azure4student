@@ -87,12 +87,16 @@ resource "azurerm_network_security_rule" "ssh" {
 }
 
 resource "azurerm_public_ip" "vm" {
-  name                = "${local.prefix}-vm-ip"
+  name                = local.public_ip_name
   location            = var.location
   resource_group_name = azurerm_resource_group.main.name
-  allocation_method   = "Static"
+  allocation_method   = var.vm_public_ip_static ? "Static" : "Dynamic"
   sku                 = "Basic"
   tags                = merge(var.tags, { component = "network" })
+
+  lifecycle {
+    create_before_destroy = true
+  }
 }
 
 resource "azurerm_network_interface" "vm" {
@@ -144,41 +148,6 @@ resource "azurerm_linux_virtual_machine" "app" {
   }
 
   tags = merge(var.tags, { component = "compute" })
-}
-
-resource "azurerm_recovery_services_vault" "main" {
-  count               = var.vm_backup_enabled ? 1 : 0
-  name                = "${local.prefix}-rsv"
-  location            = var.location
-  resource_group_name = azurerm_resource_group.main.name
-  sku                 = "Standard"
-  soft_delete_enabled = true
-
-  tags = merge(var.tags, { component = "backup" })
-}
-
-resource "azurerm_backup_policy_vm" "daily" {
-  count               = var.vm_backup_enabled ? 1 : 0
-  name                = "${local.prefix}-vm-policy"
-  resource_group_name = azurerm_resource_group.main.name
-  recovery_vault_name = azurerm_recovery_services_vault.main[0].name
-
-  backup {
-    frequency = "Daily"
-    time      = var.vm_backup_time
-  }
-
-  retention_daily {
-    count = var.vm_backup_retention_days
-  }
-}
-
-resource "azurerm_backup_protected_vm" "app" {
-  count               = var.vm_backup_enabled ? 1 : 0
-  resource_group_name = azurerm_resource_group.main.name
-  recovery_vault_name = azurerm_recovery_services_vault.main[0].name
-  source_vm_id        = azurerm_linux_virtual_machine.app.id
-  backup_policy_id    = azurerm_backup_policy_vm.daily[0].id
 }
 
 resource "azurerm_automation_account" "ops" {
@@ -373,6 +342,98 @@ resource "azurerm_automation_runbook" "db_backup" {
   ]
 }
 
+resource "azurerm_automation_runbook" "vm_snapshot" {
+  count                   = var.vm_snapshot_runbook_enabled ? 1 : 0
+  name                    = "${local.prefix}-snapshot"
+  location                = var.automation_location
+  resource_group_name     = azurerm_resource_group.main.name
+  automation_account_name = azurerm_automation_account.ops[0].name
+  log_verbose             = true
+  log_progress            = true
+  runbook_type            = "PowerShell"
+  description             = "Creates an on-demand snapshot of the VM OS disk"
+  content                 = <<-POWERSHELL
+    param(
+      [string]$resourceGroupName,
+      [string]$vmName,
+      [string]$snapshotPrefix = "manual"
+    )
+
+    Connect-AzAccount -Identity | Out-Null
+
+    $vm = Get-AzVM -ResourceGroupName $resourceGroupName -Name $vmName -ErrorAction Stop
+    $osDiskId = $vm.StorageProfile.OsDisk.ManagedDisk.Id
+    $location = $vm.Location
+    $timestamp = Get-Date -Format "yyyyMMddHHmmss"
+    $snapshotName = "$snapshotPrefix-$timestamp"
+
+    $snapshotConfig = New-AzSnapshotConfig -SourceResourceId $osDiskId -Location $location -CreateOption Copy
+    New-AzSnapshot -Snapshot $snapshotConfig -ResourceGroupName $resourceGroupName -SnapshotName $snapshotName | Out-Null
+    Write-Output "Snapshot created: $snapshotName"
+  POWERSHELL
+
+  depends_on = [
+    azurerm_automation_module.az_accounts[0],
+    azurerm_automation_module.az_compute[0]
+  ]
+}
+
+resource "azurerm_automation_runbook" "vm_snapshot_cleanup" {
+  count                   = var.vm_snapshot_cleanup_enabled ? 1 : 0
+  name                    = "${local.prefix}-snapshot-cleanup"
+  location                = var.automation_location
+  resource_group_name     = azurerm_resource_group.main.name
+  automation_account_name = azurerm_automation_account.ops[0].name
+  log_verbose             = true
+  log_progress            = true
+  runbook_type            = "PowerShell"
+  description             = "Removes VM snapshots older than the configured retention window"
+  content                 = <<-POWERSHELL
+    param(
+      [string]$resourceGroupName,
+      [string]$snapshotPrefix = "manual",
+      [int]$retentionDays = 90
+    )
+
+    Connect-AzAccount -Identity | Out-Null
+
+    if ($retentionDays -le 0) {
+      throw "RetentionDays must be greater than zero."
+    }
+
+    $cutoff = (Get-Date).AddDays(-1 * $retentionDays)
+    $snapshots = Get-AzSnapshot -ResourceGroupName $resourceGroupName -ErrorAction Stop
+
+    if ($snapshotPrefix) {
+      $snapshots = $snapshots | Where-Object { $_.Name -like "$snapshotPrefix*" }
+    }
+
+    if (-not $snapshots) {
+      Write-Output "No snapshots found matching the specified filters."
+      return
+    }
+
+    $deleted = 0
+
+    foreach ($snapshot in $snapshots) {
+      if ($snapshot.TimeCreated -lt $cutoff) {
+        Remove-AzSnapshot -ResourceGroupName $snapshot.ResourceGroupName -SnapshotName $snapshot.Name -Force
+        $deleted++
+        Write-Output "Deleted snapshot $($snapshot.Name) created on $($snapshot.TimeCreated)."
+      }
+    }
+
+    if ($deleted -eq 0) {
+      Write-Output "No snapshots older than $($cutoff.ToString('u')) were found."
+    }
+  POWERSHELL
+
+  depends_on = [
+    azurerm_automation_module.az_accounts[0],
+    azurerm_automation_module.az_compute[0]
+  ]
+}
+
 resource "azurerm_automation_schedule" "db_backup" {
   count                   = var.db_backup_enabled ? 1 : 0
   name                    = "${local.prefix}-db-backup"
@@ -402,6 +463,35 @@ resource "azurerm_automation_job_schedule" "db_backup" {
   }
 }
 
+resource "azurerm_automation_schedule" "vm_snapshot_cleanup" {
+  count                   = var.vm_snapshot_cleanup_enabled ? 1 : 0
+  name                    = "${local.prefix}-snapshot-cleanup"
+  resource_group_name     = azurerm_resource_group.main.name
+  automation_account_name = azurerm_automation_account.ops[0].name
+  frequency               = "Day"
+  interval                = 1
+  timezone                = var.vm_snapshot_cleanup_timezone
+  start_time              = local.vm_snapshot_cleanup_timestamp
+
+  lifecycle {
+    ignore_changes = [start_time]
+  }
+}
+
+resource "azurerm_automation_job_schedule" "vm_snapshot_cleanup" {
+  count                   = var.vm_snapshot_cleanup_enabled ? 1 : 0
+  resource_group_name     = azurerm_resource_group.main.name
+  automation_account_name = azurerm_automation_account.ops[0].name
+  runbook_name            = azurerm_automation_runbook.vm_snapshot_cleanup[0].name
+  schedule_name           = azurerm_automation_schedule.vm_snapshot_cleanup[0].name
+
+  parameters = {
+    resourcegroupname = azurerm_resource_group.main.name
+    snapshotprefix    = "manual"
+    retentiondays     = tostring(var.vm_snapshot_retention_days)
+  }
+}
+
 resource "azurerm_postgresql_flexible_server" "db" {
   name                          = "${local.prefix}-pg-${random_string.db_suffix.result}"
   resource_group_name           = azurerm_resource_group.main.name
@@ -411,6 +501,7 @@ resource "azurerm_postgresql_flexible_server" "db" {
   administrator_password        = var.db_admin_password
   sku_name                      = "B_Standard_B1ms"
   storage_mb                    = var.db_storage_mb
+  auto_grow_enabled             = var.db_auto_grow_enabled
   backup_retention_days         = var.db_backup_retention_days
   geo_redundant_backup_enabled  = false
   public_network_access_enabled = true
@@ -433,6 +524,7 @@ resource "azurerm_postgresql_flexible_server_firewall_rule" "azure_services" {
 }
 
 resource "azurerm_postgresql_flexible_server_firewall_rule" "vm_public_ip" {
+  count     = var.vm_public_ip_static ? 1 : 0
   name      = "allow-vm"
   server_id = azurerm_postgresql_flexible_server.db.id
 
