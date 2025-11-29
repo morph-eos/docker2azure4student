@@ -60,6 +60,12 @@ variable "vm_https_port" {
   default     = 443
 }
 
+variable "vm_public_ip_static" {
+  description = "If true, allocates a static public IP instead of the default dynamic one."
+  type        = bool
+  default     = false
+}
+
 variable "automation_location" {
   description = "Region used to host Azure Automation (defaults to an allowed Student-plan region)."
   type        = string
@@ -69,7 +75,7 @@ variable "automation_location" {
 variable "vm_schedule_enabled" {
   description = "If true, automatically stop/start the VM on a daily schedule to save costs."
   type        = bool
-  default     = true
+  default     = false
 }
 
 variable "vm_schedule_timezone" {
@@ -114,6 +120,12 @@ variable "db_storage_mb" {
   default     = 32768
 }
 
+variable "db_auto_grow_enabled" {
+  description = "Whether the PostgreSQL storage should auto-grow beyond the configured size (disabling it keeps you safely in the free tier)."
+  type        = bool
+  default     = false
+}
+
 variable "db_backup_retention_days" {
   description = "Number of days to retain automatic backups."
   type        = number
@@ -124,30 +136,6 @@ variable "db_zone" {
   description = "Availability zone used by the PostgreSQL flexible server."
   type        = string
   default     = "1"
-}
-
-variable "vm_backup_enabled" {
-  description = "Enable Azure Backup (Recovery Services Vault) for the VM."
-  type        = bool
-  default     = true
-}
-
-variable "vm_backup_time" {
-  description = "Time of day (HH:MM) when the VM backup should run."
-  type        = string
-  default     = "20:00"
-}
-
-variable "vm_backup_retention_days" {
-  description = "How many daily recovery points to keep for the VM backup policy."
-  type        = number
-  default     = 7
-}
-
-variable "vm_backup_timezone" {
-  description = "Timezone used by the VM backup policy schedule."
-  type        = string
-  default     = "Europe/Rome"
 }
 
 variable "db_backup_enabled" {
@@ -164,6 +152,36 @@ variable "db_backup_time" {
 
 variable "db_backup_timezone" {
   description = "Timezone for the PostgreSQL backup automation schedule."
+  type        = string
+  default     = "Europe/Rome"
+}
+
+variable "vm_snapshot_runbook_enabled" {
+  description = "Deploys an Automation runbook to create manual snapshots of the VM OS disk."
+  type        = bool
+  default     = true
+}
+
+variable "vm_snapshot_cleanup_enabled" {
+  description = "Enables the Automation workflow that deletes VM snapshots older than the retention window."
+  type        = bool
+  default     = true
+}
+
+variable "vm_snapshot_retention_days" {
+  description = "Number of days to keep VM snapshots before the cleanup job removes them."
+  type        = number
+  default     = 90
+}
+
+variable "vm_snapshot_cleanup_time" {
+  description = "Time of day (HH:MM) when the snapshot cleanup automation should run."
+  type        = string
+  default     = "03:00"
+}
+
+variable "vm_snapshot_cleanup_timezone" {
+  description = "Timezone used by the snapshot cleanup schedule."
   type        = string
   default     = "Europe/Rome"
 }

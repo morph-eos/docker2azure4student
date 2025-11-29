@@ -8,10 +8,11 @@ vm_size              = "Standard_B1s"
 vm_admin_username    = "azureuser"
 admin_ssh_public_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAISAMPLEKEY user@example"
 automation_location  = "eastus"
+vm_public_ip_static  = false
 
 # VM networking & schedule
 vm_http_port            = 80
-vm_schedule_enabled     = true
+vm_schedule_enabled     = false
 vm_schedule_timezone    = "Europe/Rome"
 vm_schedule_start_time  = "07:00"
 vm_schedule_stop_time   = "19:00"
@@ -25,13 +26,12 @@ allowed_admin_cidrs = [
 db_admin_username = "pgadmin"
 db_admin_password = "ChangeMe123!"
 db_zone           = "1"
-
-# Backup knobs
-vm_backup_enabled        = true
-vm_backup_time           = "20:00"
-vm_backup_retention_days = 7
-vm_backup_timezone       = "Europe/Rome"
-
 db_backup_enabled  = true
 db_backup_time     = "20:30"
 db_backup_timezone = "Europe/Rome"
+db_auto_grow_enabled = false
+vm_snapshot_runbook_enabled = true
+vm_snapshot_cleanup_enabled = true
+vm_snapshot_retention_days  = 90
+vm_snapshot_cleanup_time    = "03:00"
+vm_snapshot_cleanup_timezone = "Europe/Rome"
