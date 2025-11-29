@@ -34,7 +34,7 @@ variable "tags" {
 variable "vm_size" {
   description = "Azure VM size hosting the container workload."
   type        = string
-  default     = "Standard_B1ms"
+  default     = "Standard_B1s"
 }
 
 variable "vm_admin_username" {
