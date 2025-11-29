@@ -6,8 +6,8 @@ This folder contains an opinionated Terraform setup that provisions everything n
 
 - Resource Group scoped to a single region (default: France Central)
 - Virtual network with a subnet and a lightweight NSG (HTTP/HTTPS always open, SSH restricted to the CIDRs you provide)
-- Public IP, NIC, and a small Ubuntu-based VM (default size `Standard_B1ms`) ready for you to configure manually (install Docker, agents, etc.)
-- The VM OS disk is pinned to a 64 GB Standard SSD (covered by the Azure Free Tier) so you only pay if you grow beyond that footprint
+- Public IP, NIC, and a small Ubuntu-based VM (default size `Standard_B1s`, which falls inside the Student free tier) ready for you to configure manually (install Docker, agents, etc.)
+- The VM OS disk is pinned to a 64 GB Premium SSD P6 (the disk SKU included in the Student free tier). Going above this size upgrades you to paid tiers automatically.
 - Optional Recovery Services vault + daily VM backup policy (enabled by default) so you always have rolling restore points without paying extra outside the free tier
 - Azure Automation account (only if needed) with schedules to start the VM at 07:00 and stop it at 19:00 so you burn roughly half the compute hours; times/timezone can be changed or disabled via variables
 - Azure Database for PostgreSQL Flexible Server on the Basic SKU with backups enabled*
