@@ -159,6 +159,7 @@ jobs:
           import_if_exists() {
             local address="$1"
             local resource_id="$2"
+            local skip_check="${3:-false}"
             if [[ -z "$resource_id" ]]; then
               echo "Skipping $address: resource id not provided"
               return
@@ -167,12 +168,14 @@ jobs:
               echo "State already tracks $address"
               return
             fi
-            if az resource show --ids "$resource_id" >/dev/null 2>&1; then
-              echo "Importing $address"
-              terraform import "$address" "$resource_id"
-            else
-              echo "Azure resource not found for $address ($resource_id)"
+            if [[ "$skip_check" != "true" ]]; then
+              if ! az resource show --ids "$resource_id" >/dev/null 2>&1; then
+                echo "Azure resource not found for $address ($resource_id)"
+                return
+              fi
             fi
+            echo "Importing $address"
+            terraform import "$address" "$resource_id"
           }
 
           env_name="${ENVIRONMENT_NAME:-student-app}"
@@ -211,7 +214,7 @@ jobs:
           import_if_exists "azurerm_network_interface.vm" "$nic_id"
 
           if [[ -n "$nic_id" && -n "$nsg_id" ]]; then
-            import_if_exists "azurerm_network_interface_security_group_association.vm" "${nic_id}|${nsg_id}"
+            import_if_exists "azurerm_network_interface_security_group_association.vm" "${nic_id}|${nsg_id}" true
           fi
 
           vm_name="${prefix}-vm"
@@ -244,7 +247,7 @@ jobs:
               local runbook_id=$(az automation runbook show --subscription "$AZURE_SUBSCRIPTION_ID" -g "$rg_name" --automation-account-name "$auto_name" --name "$runbook_name" --query id -o tsv || true)
               local schedule_id=$(az automation schedule show --subscription "$AZURE_SUBSCRIPTION_ID" -g "$rg_name" --automation-account-name "$auto_name" --name "$schedule_name" --query id -o tsv || true)
               if [[ -n "$runbook_id" && -n "$schedule_id" ]]; then
-                import_if_exists "$address" "${schedule_id}|${runbook_id}"
+                import_if_exists "$address" "${schedule_id}|${runbook_id}" true
               fi
             }
 
