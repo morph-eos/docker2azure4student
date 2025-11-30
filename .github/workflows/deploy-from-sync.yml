@@ -232,7 +232,7 @@ jobs:
             delete_schedule() {
               local schedule_name="$1"
               if az automation schedule show --subscription "$AZURE_SUBSCRIPTION_ID" -g "$rg_name" --automation-account-name "$auto_name" --name "$schedule_name" >/dev/null 2>&1; then
-                az automation schedule delete --subscription "$AZURE_SUBSCRIPTION_ID" -g "$rg_name" --automation-account-name "$auto_name" --name "$schedule_name" >/dev/null
+                az automation schedule delete --subscription "$AZURE_SUBSCRIPTION_ID" -g "$rg_name" --automation-account-name "$auto_name" --name "$schedule_name" --yes >/dev/null
                 echo "Deleted automation schedule $schedule_name"
               else
                 echo "Schedule $schedule_name not found, skipping"
