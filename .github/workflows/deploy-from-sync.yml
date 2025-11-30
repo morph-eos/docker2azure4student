@@ -288,6 +288,37 @@ jobs:
             fi
           fi
 
+      - name: Temporarily open SSH
+        id: temp-ssh
+        env:
+          ENVIRONMENT_NAME: ${{ steps.tfvars-meta.outputs.environment_name }}
+        run: |
+          set -euo pipefail
+          env_name=${ENVIRONMENT_NAME:-student-app}
+          normalized=$(printf '%s' "$env_name" | tr '[:upper:]' '[:lower:]')
+          normalized=${normalized// /-}
+          prefix=${normalized:0:45}
+          rg_name="${prefix}-rg"
+          nsg_name="${prefix}-vm-nsg"
+          RULE_NAME="gha-temp-${{ github.run_id }}"
+          az network nsg rule create \
+            --resource-group "$rg_name" \
+            --nsg-name "$nsg_name" \
+            --name "$RULE_NAME" \
+            --priority 50 \
+            --direction Inbound \
+            --access Allow \
+            --protocol Tcp \
+            --source-address-prefixes 0.0.0.0/0 \
+            --source-port-ranges '*' \
+            --destination-address-prefixes '*' \
+            --destination-port-ranges 22 \
+            --only-show-errors \
+            --output none
+          echo "rule_name=$RULE_NAME" >> "$GITHUB_OUTPUT"
+          echo "rg_name=$rg_name" >> "$GITHUB_OUTPUT"
+          echo "nsg_name=$nsg_name" >> "$GITHUB_OUTPUT"
+
       - name: Terraform apply
         working-directory: ${{ env.TERRAFORM_WORKING_DIR }}
         run: terraform apply -input=false -auto-approve
@@ -375,6 +406,17 @@ jobs:
             sudo docker rm ${CONTAINER_SERVICE_NAME} || true
             sudo docker run -d --name ${CONTAINER_SERVICE_NAME} --env-file /home/${{ env.VM_SSH_USERNAME }}/app.env -p ${CONTAINER_HTTP_PORT}:${CONTAINER_INTERNAL_HTTP_PORT} -p ${CONTAINER_HTTPS_PORT}:${CONTAINER_INTERNAL_HTTPS_PORT} --restart unless-stopped ${IMAGE_URI}
           "
+
+      - name: Remove temporary SSH rule
+        if: always() && steps.temp-ssh.outputs.rule_name != ''
+        run: |
+          set -euo pipefail
+          az network nsg rule delete \
+            --resource-group "${{ steps.temp-ssh.outputs.rg_name }}" \
+            --nsg-name "${{ steps.temp-ssh.outputs.nsg_name }}" \
+            --name "${{ steps.temp-ssh.outputs.rule_name }}" \
+            --only-show-errors \
+            --output none
 
   cleanup:
     runs-on: ubuntu-latest
