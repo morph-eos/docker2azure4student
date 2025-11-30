@@ -122,6 +122,28 @@ jobs:
         run: |
           terraform init -input=false ${{ steps.backend.outputs.args }}
 
+      - name: Import existing resource group
+        working-directory: ${{ env.TERRAFORM_WORKING_DIR }}
+        env:
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          ENVIRONMENT_NAME: ${{ secrets.ENVIRONMENT_NAME }}
+        run: |
+          set -euo pipefail
+          if terraform state list | grep -q '^azurerm_resource_group\.main$'; then
+            echo "Resource group already managed in state"
+            exit 0
+          fi
+          env_name="${ENVIRONMENT_NAME:-student-app}"
+          normalized=$(printf '%s' "$env_name" | tr '[:upper:]' '[:lower:]')
+          normalized=${normalized// /-}
+          normalized=${normalized:0:45}
+          rg_name="${normalized}-rg"
+          if az group show --name "$rg_name" --subscription "$AZURE_SUBSCRIPTION_ID" >/dev/null 2>&1; then
+            terraform import azurerm_resource_group.main "/subscriptions/${AZURE_SUBSCRIPTION_ID}/resourceGroups/${rg_name}"
+          else
+            echo "No pre-existing resource group named $rg_name. Skipping import."
+          fi
+
       - name: Terraform apply
         working-directory: ${{ env.TERRAFORM_WORKING_DIR }}
         run: terraform apply -input=false -auto-approve
