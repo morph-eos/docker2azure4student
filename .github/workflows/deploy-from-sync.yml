@@ -229,32 +229,36 @@ jobs:
             import_if_exists "azurerm_automation_module.az_compute[0]" "${auto_id}/modules/Az.Compute"
             import_if_exists "azurerm_automation_module.az_postgresql[0]" "${auto_id}/modules/Az.PostgreSql"
 
-            import_if_exists "azurerm_automation_runbook.vm_start[0]" "${auto_id}/runbooks/${prefix}-start-vm"
-            import_if_exists "azurerm_automation_runbook.vm_stop[0]" "${auto_id}/runbooks/${prefix}-stop-vm"
-            import_if_exists "azurerm_automation_runbook.db_backup[0]" "${auto_id}/runbooks/${prefix}-db-backup"
-            import_if_exists "azurerm_automation_runbook.vm_snapshot[0]" "${auto_id}/runbooks/${prefix}-snapshot"
-            import_if_exists "azurerm_automation_runbook.vm_snapshot_cleanup[0]" "${auto_id}/runbooks/${prefix}-snapshot-cleanup"
-
-            import_if_exists "azurerm_automation_schedule.vm_start[0]" "${auto_id}/schedules/${prefix}-vm-start"
-            import_if_exists "azurerm_automation_schedule.vm_stop[0]" "${auto_id}/schedules/${prefix}-vm-stop"
-            import_if_exists "azurerm_automation_schedule.db_backup[0]" "${auto_id}/schedules/${prefix}-db-backup"
-            import_if_exists "azurerm_automation_schedule.vm_snapshot_cleanup[0]" "${auto_id}/schedules/${prefix}-snapshot-cleanup"
-
-            import_job_schedule() {
-              local runbook_name="$1"
-              local schedule_name="$2"
-              local address="$3"
-              local runbook_id=$(az automation runbook show --subscription "$AZURE_SUBSCRIPTION_ID" -g "$rg_name" --automation-account-name "$auto_name" --name "$runbook_name" --query id -o tsv || true)
-              local schedule_id=$(az automation schedule show --subscription "$AZURE_SUBSCRIPTION_ID" -g "$rg_name" --automation-account-name "$auto_name" --name "$schedule_name" --query id -o tsv || true)
-              if [[ -n "$runbook_id" && -n "$schedule_id" ]]; then
-                import_if_exists "$address" "${schedule_id}|${runbook_id}" true
+            delete_schedule() {
+              local schedule_name="$1"
+              if az automation schedule show --subscription "$AZURE_SUBSCRIPTION_ID" -g "$rg_name" --automation-account-name "$auto_name" --name "$schedule_name" >/dev/null 2>&1; then
+                az automation schedule delete --subscription "$AZURE_SUBSCRIPTION_ID" -g "$rg_name" --automation-account-name "$auto_name" --name "$schedule_name" >/dev/null
+                echo "Deleted automation schedule $schedule_name"
+              else
+                echo "Schedule $schedule_name not found, skipping"
               fi
             }
 
-            import_job_schedule "${prefix}-start-vm" "${prefix}-vm-start" "azurerm_automation_job_schedule.vm_start[0]"
-            import_job_schedule "${prefix}-stop-vm" "${prefix}-vm-stop" "azurerm_automation_job_schedule.vm_stop[0]"
-            import_job_schedule "${prefix}-db-backup" "${prefix}-db-backup" "azurerm_automation_job_schedule.db_backup[0]"
-            import_job_schedule "${prefix}-snapshot-cleanup" "${prefix}-snapshot-cleanup" "azurerm_automation_job_schedule.vm_snapshot_cleanup[0]"
+            delete_runbook() {
+              local runbook_name="$1"
+              if az automation runbook show --subscription "$AZURE_SUBSCRIPTION_ID" -g "$rg_name" --automation-account-name "$auto_name" --name "$runbook_name" >/dev/null 2>&1; then
+                az automation runbook delete --subscription "$AZURE_SUBSCRIPTION_ID" -g "$rg_name" --automation-account-name "$auto_name" --name "$runbook_name" --yes >/dev/null
+                echo "Deleted automation runbook $runbook_name"
+              else
+                echo "Runbook $runbook_name not found, skipping"
+              fi
+            }
+
+            delete_schedule "${prefix}-vm-start"
+            delete_schedule "${prefix}-vm-stop"
+            delete_schedule "${prefix}-db-backup"
+            delete_schedule "${prefix}-snapshot-cleanup"
+
+            delete_runbook "${prefix}-start-vm"
+            delete_runbook "${prefix}-stop-vm"
+            delete_runbook "${prefix}-db-backup"
+            delete_runbook "${prefix}-snapshot"
+            delete_runbook "${prefix}-snapshot-cleanup"
 
             auto_principal=$(az automation account show --subscription "$AZURE_SUBSCRIPTION_ID" -g "$rg_name" -n "$auto_name" --query identity.principalId -o tsv || true)
             if [[ -n "$auto_principal" ]]; then
