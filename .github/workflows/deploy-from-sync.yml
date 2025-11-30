@@ -188,6 +188,10 @@ jobs:
           nic_id=$(az network nic show --subscription "$AZURE_SUBSCRIPTION_ID" -g "$rg_name" -n "$nic_name" --query id -o tsv || true)
           import_if_exists "azurerm_network_interface.vm" "$nic_id"
 
+          if [[ -n "$nic_id" && -n "$nsg_id" ]]; then
+            import_if_exists "azurerm_network_interface_security_group_association.vm" "${nic_id}|${nsg_id}"
+          fi
+
           vm_name="${prefix}-vm"
           vm_id=$(az vm show --subscription "$AZURE_SUBSCRIPTION_ID" -g "$rg_name" -n "$vm_name" --query id -o tsv || true)
           import_if_exists "azurerm_linux_virtual_machine.app" "$vm_id"
@@ -211,25 +215,27 @@ jobs:
             import_if_exists "azurerm_automation_schedule.db_backup[0]" "${auto_id}/schedules/${prefix}-db-backup"
             import_if_exists "azurerm_automation_schedule.vm_snapshot_cleanup[0]" "${auto_id}/schedules/${prefix}-snapshot-cleanup"
 
-            # Job schedules use generated GUIDs. Resolve them dynamically.
-            job_id() {
-              local runbook="$1"
-              local schedule="$2"
-              az automation job-schedule list --subscription "$AZURE_SUBSCRIPTION_ID" -g "$rg_name" --automation-account-name "$auto_name" \
-                --query "[?properties.runbook.name=='${runbook}' && properties.schedule.name=='${schedule}'].id | [0]" -o tsv || true
+            import_job_schedule() {
+              local runbook_name="$1"
+              local schedule_name="$2"
+              local address="$3"
+              local runbook_id=$(az automation runbook show --subscription "$AZURE_SUBSCRIPTION_ID" -g "$rg_name" --automation-account-name "$auto_name" --name "$runbook_name" --query id -o tsv || true)
+              local schedule_id=$(az automation schedule show --subscription "$AZURE_SUBSCRIPTION_ID" -g "$rg_name" --automation-account-name "$auto_name" --name "$schedule_name" --query id -o tsv || true)
+              if [[ -n "$runbook_id" && -n "$schedule_id" ]]; then
+                import_if_exists "$address" "${schedule_id}|${runbook_id}"
+              fi
             }
 
-            vm_start_job=$(job_id "${prefix}-start-vm" "${prefix}-vm-start")
-            import_if_exists "azurerm_automation_job_schedule.vm_start[0]" "$vm_start_job"
+            import_job_schedule "${prefix}-start-vm" "${prefix}-vm-start" "azurerm_automation_job_schedule.vm_start[0]"
+            import_job_schedule "${prefix}-stop-vm" "${prefix}-vm-stop" "azurerm_automation_job_schedule.vm_stop[0]"
+            import_job_schedule "${prefix}-db-backup" "${prefix}-db-backup" "azurerm_automation_job_schedule.db_backup[0]"
+            import_job_schedule "${prefix}-snapshot-cleanup" "${prefix}-snapshot-cleanup" "azurerm_automation_job_schedule.vm_snapshot_cleanup[0]"
 
-            vm_stop_job=$(job_id "${prefix}-stop-vm" "${prefix}-vm-stop")
-            import_if_exists "azurerm_automation_job_schedule.vm_stop[0]" "$vm_stop_job"
-
-            db_backup_job=$(job_id "${prefix}-db-backup" "${prefix}-db-backup")
-            import_if_exists "azurerm_automation_job_schedule.db_backup[0]" "$db_backup_job"
-
-            snapshot_cleanup_job=$(job_id "${prefix}-snapshot-cleanup" "${prefix}-snapshot-cleanup")
-            import_if_exists "azurerm_automation_job_schedule.vm_snapshot_cleanup[0]" "$snapshot_cleanup_job"
+            auto_principal=$(az automation account show --subscription "$AZURE_SUBSCRIPTION_ID" -g "$rg_name" -n "$auto_name" --query identity.principalId -o tsv || true)
+            if [[ -n "$auto_principal" ]]; then
+              role_assignment=$(az role assignment list --subscription "$AZURE_SUBSCRIPTION_ID" --assignee-object-id "$auto_principal" --scope "$rg_id" --query '[0].id' -o tsv || true)
+              import_if_exists "azurerm_role_assignment.automation_rg[0]" "$role_assignment"
+            fi
           fi
 
           pg_id=$(az resource list --subscription "$AZURE_SUBSCRIPTION_ID" --resource-group "$rg_name" \
