@@ -221,3 +221,19 @@ jobs:
             } catch (error) {
               core.warning(`Could not delete branch ${branch}: ${error.message}`);
             }
+
+      - name: Delete workflow logs on success
+        if: ${{ needs.deploy.result == 'success' }}
+        uses: actions/github-script@v7
+        with:
+          script: |
+            try {
+              await github.rest.actions.deleteWorkflowRunLogs({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                run_id: context.runId
+              });
+              core.info('Deleted workflow logs after successful run.');
+            } catch (error) {
+              core.warning(`Unable to delete workflow logs: ${error.message}`);
+            }
