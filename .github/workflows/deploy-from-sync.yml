@@ -288,37 +288,6 @@ jobs:
             fi
           fi
 
-      - name: Temporarily open SSH
-        id: temp-ssh
-        env:
-          ENVIRONMENT_NAME: ${{ steps.tfvars-meta.outputs.environment_name }}
-        run: |
-          set -euo pipefail
-          env_name=${ENVIRONMENT_NAME:-student-app}
-          normalized=$(printf '%s' "$env_name" | tr '[:upper:]' '[:lower:]')
-          normalized=${normalized// /-}
-          prefix=${normalized:0:45}
-          rg_name="${prefix}-rg"
-          nsg_name="${prefix}-vm-nsg"
-          RULE_NAME="gha-temp-${{ github.run_id }}"
-          az network nsg rule create \
-            --resource-group "$rg_name" \
-            --nsg-name "$nsg_name" \
-            --name "$RULE_NAME" \
-            --priority 50 \
-            --direction Inbound \
-            --access Allow \
-            --protocol Tcp \
-            --source-address-prefixes 0.0.0.0/0 \
-            --source-port-ranges '*' \
-            --destination-address-prefixes '*' \
-            --destination-port-ranges 22 \
-            --only-show-errors \
-            --output none
-          echo "rule_name=$RULE_NAME" >> "$GITHUB_OUTPUT"
-          echo "rg_name=$rg_name" >> "$GITHUB_OUTPUT"
-          echo "nsg_name=$nsg_name" >> "$GITHUB_OUTPUT"
-
       - name: Terraform apply
         working-directory: ${{ env.TERRAFORM_WORKING_DIR }}
         run: terraform apply -input=false -auto-approve
@@ -333,6 +302,49 @@ jobs:
             exit 1
           fi
           echo "vm_ip=$VM_IP" >> "$GITHUB_OUTPUT"
+
+      - name: Temporarily open SSH
+        id: temp-ssh
+        env:
+          ENVIRONMENT_NAME: ${{ steps.tfvars-meta.outputs.environment_name }}
+        run: |
+          set -euo pipefail
+          env_name=${ENVIRONMENT_NAME:-student-app}
+          normalized=$(printf '%s' "$env_name" | tr '[:upper:]' '[:lower:]')
+          normalized=${normalized// /-}
+          prefix=${normalized:0:45}
+          rg_name="${prefix}-rg"
+          nsg_name="${prefix}-vm-nsg"
+          RULE_NAME="gha-temp-${{ github.run_id }}"
+          # Prefer lowest-available high priority to avoid colliding with existing rules
+          existing_priorities=$(az network nsg rule list --resource-group "$rg_name" --nsg-name "$nsg_name" --query '[].priority' -o tsv | tr '\t' '\n' | tr -d '\r' | sed '/^$/d' || true)
+          priority=4096
+          if [[ -n "$existing_priorities" ]]; then
+            while printf '%s\n' "$existing_priorities" | grep -qx "$priority"; do
+              priority=$((priority-1))
+              if (( priority < 100 )); then
+                echo "Unable to find available NSG rule priority between 100-4096" >&2
+                exit 1
+              fi
+            done
+          fi
+          az network nsg rule create \
+            --resource-group "$rg_name" \
+            --nsg-name "$nsg_name" \
+            --name "$RULE_NAME" \
+            --priority "$priority" \
+            --direction Inbound \
+            --access Allow \
+            --protocol Tcp \
+            --source-address-prefixes 0.0.0.0/0 \
+            --source-port-ranges '*' \
+            --destination-address-prefixes '*' \
+            --destination-port-ranges 22 \
+            --only-show-errors \
+            --output none
+          echo "rule_name=$RULE_NAME" >> "$GITHUB_OUTPUT"
+          echo "rg_name=$rg_name" >> "$GITHUB_OUTPUT"
+          echo "nsg_name=$nsg_name" >> "$GITHUB_OUTPUT"
 
       - name: Read sync manifest
         id: manifest
