@@ -345,7 +345,19 @@ jobs:
           ssh-private-key: ${{ env.VM_SSH_KEY }}
 
       - name: Trust VM host key
-        run: ssh-keyscan -H ${{ steps.tf-outputs.outputs.vm_ip }} >> ~/.ssh/known_hosts
+        run: |
+          set -euo pipefail
+          VM_IP="${{ steps.tf-outputs.outputs.vm_ip }}"
+          echo "Attempting to fetch SSH host key for $VM_IP"
+          for attempt in {1..5}; do
+            if ssh-keyscan -H "$VM_IP" >> ~/.ssh/known_hosts 2>/dev/null; then
+              echo "Host key added after $attempt attempt(s)."
+              exit 0
+            fi
+            echo "ssh-keyscan failed (attempt $attempt), retrying in 5s..." >&2
+            sleep 5
+          done
+          echo "Warning: unable to retrieve host key; continuing because later SSH commands use StrictHostKeyChecking=no" >&2
 
       - name: Copy env file to VM
         run: scp -o StrictHostKeyChecking=no app.env ${{ env.VM_SSH_USERNAME }}@${{ steps.tf-outputs.outputs.vm_ip }}:/home/${{ env.VM_SSH_USERNAME }}/app.env
