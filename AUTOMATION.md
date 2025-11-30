@@ -58,21 +58,35 @@ You can customize the destination repo/branch by editing the `INFRA_REPO`, `INFR
 | Secret | Purpose |
 | --- | --- |
 | `AZURE_CREDENTIALS` | Output of `az ad sp create-for-rbac --name ... --sdk-auth` used by `azure/login@v2` to obtain an access token. |
-| `AZURE_SUBSCRIPTION_ID` / `AZURE_TENANT_ID` | Injected into Terraform variables to bind the provider to the correct subscription + tenant. |
-| `ADMIN_SSH_PUBLIC_KEY` | Propagated to Terraform (`admin_ssh_public_key`). |
-| `DB_ADMIN_PASSWORD` | Passed as `TF_VAR_db_admin_password` so the workflow never reads `terraform.tfvars`. |
+| `TFVARS_B64` | Base64-encoded `terraform.tfvars` that contains every Terraform variable (subscription/tenant IDs, environment name, SSH key, DB password, etc.). The workflow recreates `terraform.tfvars` from this secret at runtime, so no individual `TF_VAR_*` secrets are required. |
 | `TF_BACKEND_CONFIG` *(optional)* | Multiline backend configuration snippet (e.g., `storage_account_name=...`) written to `backend.hcl` when present. Leave empty to keep local state. |
+| `IMAGE_REGISTRY` / `IMAGE_NAME` | Registry hostname (including namespace) and repository name used to tag/push the container image. |
+| `REGISTRY_LOGIN_SERVER` | Host passed to `docker login` (for GHCR it's `ghcr.io`, for ACR use `<name>.azurecr.io`). |
 | `CONTAINER_REGISTRY_USERNAME` / `CONTAINER_REGISTRY_PASSWORD` | Credentials for `docker login` on both the runner (image build) and the VM (image pull). Works with ACR, GHCR, etc. |
 | `APP_ENV_VARS_B64` | Base64-encoded `.env` file recreated on the VM before launching the container. |
 | `VM_SSH_KEY` | Private SSH key with access to the target VM. |
-| `IMAGE_REGISTRY` / `IMAGE_NAME` | Registry hostname (including namespace) and repository name used to tag/push the container image. |
-| `REGISTRY_LOGIN_SERVER` | Host passed to `docker login` (for GHCR it's `ghcr.io`, for ACR use `<name>.azurecr.io`). |
 | `VM_SSH_USERNAME` | Username injected in Terraform outputs and used by the automation to copy files / run commands over SSH. |
+
+### Creating the `TFVARS_B64` secret
+
+1. Start from `terraform.tfvars.example`, create your real `terraform.tfvars`, and keep it **out of version control**.
+2. Base64-encode the file without newlines:
+
+   ```bash
+   # macOS
+   base64 terraform.tfvars | tr -d '\n' | pbcopy
+
+   # Linux
+   base64 -w0 terraform.tfvars | xclip -selection clipboard
+   ```
+
+   (Replace the clipboard command with whatever is available on your system.)
+3. Paste the encoded string into the `TFVARS_B64` secret of the infra repository. Any time you change `terraform.tfvars`, regenerate and update this secret.
 
 **Job outline implemented in `deploy-from-sync.yml`:**
 
 1. **Branch resolution + checkout** – Determines the correct sync branch (payload for manual runs, `github.ref` for pushes) and checks it out so Terraform + `sync-bundle/` files are available.
-2. **Terraform** – Logs into Azure, optionally writes `backend.hcl` from `TF_BACKEND_CONFIG`, and runs `terraform init` + `terraform apply -auto-approve`. The workflow relies on `TF_VAR_*` env vars (sourced from secrets) to avoid storing sensitive values in the repo.
+2. **Terraform** – Logs into Azure, restores `terraform.tfvars` from `TFVARS_B64`, optionally writes `backend.hcl` from `TF_BACKEND_CONFIG`, and runs `terraform init` + `terraform apply -auto-approve`. All Terraform values now come from the reconstructed `terraform.tfvars` file, so no individual `TF_VAR_*` secrets are required.
 3. **Outputs** – Reads `vm_public_ip` so we know where to deploy and parses `sync-bundle/manifest.json` to get the image tag.
 4. **Container build** – Logs into the registry, builds the runtime image using `sync-bundle/Dockerfile`, tags it as `<IMAGE_REGISTRY>/<IMAGE_NAME>:<imageTag>`, and pushes it.
 5. **VM deployment** – Recreates the `.env` file from `APP_ENV_VARS_B64`, copies it over SSH, logs into the registry on the VM, pulls the new image, stops/removes the previous container, and runs the new one (ports `80 -> 8080`, `443 -> 8081`).

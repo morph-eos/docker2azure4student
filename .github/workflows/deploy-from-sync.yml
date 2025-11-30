@@ -32,7 +32,6 @@ jobs:
       CONTAINER_INTERNAL_HTTP_PORT: '8080'
       CONTAINER_HTTPS_PORT: '443'
       CONTAINER_INTERNAL_HTTPS_PORT: '8081'
-      TF_VAR_environment_name: ${{ secrets.ENVIRONMENT_NAME }}
     steps:
       - name: Determine sync branch
         id: sync-branch
@@ -53,6 +52,14 @@ jobs:
         with:
           ref: ${{ steps.sync-branch.outputs.value }}
           fetch-depth: 0
+
+      - name: Restore terraform.tfvars from secret
+        run: |
+          if [[ -z "${{ secrets.TFVARS_B64 }}" ]]; then
+            echo "Missing TFVARS_B64 secret" >&2
+            exit 1
+          fi
+          echo "${{ secrets.TFVARS_B64 }}" | base64 -d > terraform.tfvars
 
       - name: Load deployment secrets
         id: load-secrets
@@ -82,10 +89,6 @@ jobs:
             echo "Missing secret: AZURE_CREDENTIALS" >&2
             missing=1
           fi
-          append_var TF_VAR_subscription_id "${{ secrets.AZURE_SUBSCRIPTION_ID }}" AZURE_SUBSCRIPTION_ID
-          append_var TF_VAR_tenant_id "${{ secrets.AZURE_TENANT_ID }}" AZURE_TENANT_ID
-          append_var TF_VAR_admin_ssh_public_key "${{ secrets.ADMIN_SSH_PUBLIC_KEY }}" ADMIN_SSH_PUBLIC_KEY
-          append_var TF_VAR_db_admin_password "${{ secrets.DB_ADMIN_PASSWORD }}" DB_ADMIN_PASSWORD
           append_var TF_BACKEND_CONFIG "${{ secrets.TF_BACKEND_CONFIG }}" TF_BACKEND_CONFIG false
           append_var IMAGE_REGISTRY "${{ secrets.IMAGE_REGISTRY }}" IMAGE_REGISTRY
           append_var IMAGE_NAME "${{ secrets.IMAGE_NAME }}" IMAGE_NAME
@@ -122,11 +125,30 @@ jobs:
         run: |
           terraform init -input=false ${{ steps.backend.outputs.args }}
 
+      - name: Export Terraform vars for workflow
+        id: tfvars-meta
+        working-directory: ${{ env.TERRAFORM_WORKING_DIR }}
+        run: |
+          set -euo pipefail
+          python ./scripts/tfvars_meta.py terraform.tfvars subscription_id environment_name > vars.tmp
+          while IFS='=' read -r key value; do
+            echo "${key}=${value}" >> "$GITHUB_OUTPUT"
+            case "$key" in
+              subscription_id)
+                echo "AZURE_SUBSCRIPTION_ID=${value}" >> "$GITHUB_ENV"
+                ;;
+              environment_name)
+                echo "ENVIRONMENT_NAME=${value}" >> "$GITHUB_ENV"
+                ;;
+            esac
+          done < vars.tmp
+          rm vars.tmp
+
       - name: Import existing Azure resources
         working-directory: ${{ env.TERRAFORM_WORKING_DIR }}
         env:
-          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-          ENVIRONMENT_NAME: ${{ secrets.ENVIRONMENT_NAME }}
+          AZURE_SUBSCRIPTION_ID: ${{ steps.tfvars-meta.outputs.subscription_id }}
+          ENVIRONMENT_NAME: ${{ steps.tfvars-meta.outputs.environment_name }}
         run: |
           set -euo pipefail
 
