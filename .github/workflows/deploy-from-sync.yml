@@ -122,26 +122,128 @@ jobs:
         run: |
           terraform init -input=false ${{ steps.backend.outputs.args }}
 
-      - name: Import existing resource group
+      - name: Import existing Azure resources
         working-directory: ${{ env.TERRAFORM_WORKING_DIR }}
         env:
           AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           ENVIRONMENT_NAME: ${{ secrets.ENVIRONMENT_NAME }}
         run: |
           set -euo pipefail
-          if terraform state list | grep -q '^azurerm_resource_group\.main$'; then
-            echo "Resource group already managed in state"
-            exit 0
-          fi
+
+          tf_contains() {
+            terraform state list 2>/dev/null | grep -q "^$1$"
+          }
+
+          import_if_exists() {
+            local address="$1"
+            local resource_id="$2"
+            if [[ -z "$resource_id" ]]; then
+              echo "Skipping $address: resource id not provided"
+              return
+            fi
+            if tf_contains "$address"; then
+              echo "State already tracks $address"
+              return
+            fi
+            if az resource show --ids "$resource_id" >/dev/null 2>&1; then
+              echo "Importing $address"
+              terraform import "$address" "$resource_id"
+            else
+              echo "Azure resource not found for $address ($resource_id)"
+            fi
+          }
+
           env_name="${ENVIRONMENT_NAME:-student-app}"
           normalized=$(printf '%s' "$env_name" | tr '[:upper:]' '[:lower:]')
           normalized=${normalized// /-}
-          normalized=${normalized:0:45}
-          rg_name="${normalized}-rg"
-          if az group show --name "$rg_name" --subscription "$AZURE_SUBSCRIPTION_ID" >/dev/null 2>&1; then
-            terraform import azurerm_resource_group.main "/subscriptions/${AZURE_SUBSCRIPTION_ID}/resourceGroups/${rg_name}"
-          else
-            echo "No pre-existing resource group named $rg_name. Skipping import."
+          prefix=${normalized:0:45}
+          subscription="/subscriptions/${AZURE_SUBSCRIPTION_ID}"
+          rg_name="${prefix}-rg"
+          rg_id="${subscription}/resourceGroups/${rg_name}"
+
+          rg_exists=$(az group show --name "$rg_name" --subscription "$AZURE_SUBSCRIPTION_ID" --query id -o tsv || true)
+          import_if_exists "azurerm_resource_group.main" "$rg_exists"
+
+          vnet_name="${prefix}-vnet"
+          vnet_id=$(az network vnet show --subscription "$AZURE_SUBSCRIPTION_ID" -g "$rg_name" -n "$vnet_name" --query id -o tsv || true)
+          import_if_exists "azurerm_virtual_network.main" "$vnet_id"
+
+          subnet_name="${prefix}-vm-subnet"
+          subnet_id=$(az network vnet subnet show --subscription "$AZURE_SUBSCRIPTION_ID" -g "$rg_name" --vnet-name "$vnet_name" -n "$subnet_name" --query id -o tsv || true)
+          import_if_exists "azurerm_subnet.vm" "$subnet_id"
+
+          nsg_name="${prefix}-vm-nsg"
+          nsg_id=$(az network nsg show --subscription "$AZURE_SUBSCRIPTION_ID" -g "$rg_name" -n "$nsg_name" --query id -o tsv || true)
+          import_if_exists "azurerm_network_security_group.vm" "$nsg_id"
+
+          pip_name="${prefix}-vm-ip-static"
+          pip_id=$(az network public-ip show --subscription "$AZURE_SUBSCRIPTION_ID" -g "$rg_name" -n "$pip_name" --query id -o tsv || true)
+          if [[ -z "$pip_id" ]]; then
+            pip_name="${prefix}-vm-ip-dynamic"
+            pip_id=$(az network public-ip show --subscription "$AZURE_SUBSCRIPTION_ID" -g "$rg_name" -n "$pip_name" --query id -o tsv || true)
+          fi
+          import_if_exists "azurerm_public_ip.vm" "$pip_id"
+
+          nic_name="${prefix}-vm-nic"
+          nic_id=$(az network nic show --subscription "$AZURE_SUBSCRIPTION_ID" -g "$rg_name" -n "$nic_name" --query id -o tsv || true)
+          import_if_exists "azurerm_network_interface.vm" "$nic_id"
+
+          vm_name="${prefix}-vm"
+          vm_id=$(az vm show --subscription "$AZURE_SUBSCRIPTION_ID" -g "$rg_name" -n "$vm_name" --query id -o tsv || true)
+          import_if_exists "azurerm_linux_virtual_machine.app" "$vm_id"
+
+          auto_name="${prefix}-aa"
+          auto_id=$(az automation account show --subscription "$AZURE_SUBSCRIPTION_ID" -g "$rg_name" -n "$auto_name" --query id -o tsv || true)
+          if [[ -n "$auto_id" ]]; then
+            import_if_exists "azurerm_automation_account.ops[0]" "$auto_id"
+            import_if_exists "azurerm_automation_module.az_accounts[0]" "${auto_id}/modules/Az.Accounts"
+            import_if_exists "azurerm_automation_module.az_compute[0]" "${auto_id}/modules/Az.Compute"
+            import_if_exists "azurerm_automation_module.az_postgresql[0]" "${auto_id}/modules/Az.PostgreSql"
+
+            import_if_exists "azurerm_automation_runbook.vm_start[0]" "${auto_id}/runbooks/${prefix}-start-vm"
+            import_if_exists "azurerm_automation_runbook.vm_stop[0]" "${auto_id}/runbooks/${prefix}-stop-vm"
+            import_if_exists "azurerm_automation_runbook.db_backup[0]" "${auto_id}/runbooks/${prefix}-db-backup"
+            import_if_exists "azurerm_automation_runbook.vm_snapshot[0]" "${auto_id}/runbooks/${prefix}-snapshot"
+            import_if_exists "azurerm_automation_runbook.vm_snapshot_cleanup[0]" "${auto_id}/runbooks/${prefix}-snapshot-cleanup"
+
+            import_if_exists "azurerm_automation_schedule.vm_start[0]" "${auto_id}/schedules/${prefix}-vm-start"
+            import_if_exists "azurerm_automation_schedule.vm_stop[0]" "${auto_id}/schedules/${prefix}-vm-stop"
+            import_if_exists "azurerm_automation_schedule.db_backup[0]" "${auto_id}/schedules/${prefix}-db-backup"
+            import_if_exists "azurerm_automation_schedule.vm_snapshot_cleanup[0]" "${auto_id}/schedules/${prefix}-snapshot-cleanup"
+
+            # Job schedules use generated GUIDs. Resolve them dynamically.
+            job_id() {
+              local runbook="$1"
+              local schedule="$2"
+              az automation job-schedule list --subscription "$AZURE_SUBSCRIPTION_ID" -g "$rg_name" --automation-account-name "$auto_name" \
+                --query "[?properties.runbook.name=='${runbook}' && properties.schedule.name=='${schedule}'].id | [0]" -o tsv || true
+            }
+
+            vm_start_job=$(job_id "${prefix}-start-vm" "${prefix}-vm-start")
+            import_if_exists "azurerm_automation_job_schedule.vm_start[0]" "$vm_start_job"
+
+            vm_stop_job=$(job_id "${prefix}-stop-vm" "${prefix}-vm-stop")
+            import_if_exists "azurerm_automation_job_schedule.vm_stop[0]" "$vm_stop_job"
+
+            db_backup_job=$(job_id "${prefix}-db-backup" "${prefix}-db-backup")
+            import_if_exists "azurerm_automation_job_schedule.db_backup[0]" "$db_backup_job"
+
+            snapshot_cleanup_job=$(job_id "${prefix}-snapshot-cleanup" "${prefix}-snapshot-cleanup")
+            import_if_exists "azurerm_automation_job_schedule.vm_snapshot_cleanup[0]" "$snapshot_cleanup_job"
+          fi
+
+          pg_id=$(az resource list --subscription "$AZURE_SUBSCRIPTION_ID" --resource-group "$rg_name" \
+            --resource-type "Microsoft.DBforPostgreSQL/flexibleServers" --query "[0].id" -o tsv || true)
+          if [[ -n "$pg_id" ]]; then
+            import_if_exists "azurerm_postgresql_flexible_server.db" "$pg_id"
+            pg_name=$(basename "$pg_id")
+            suffix=${pg_name##${prefix}-pg-}
+            if [[ -n "$suffix" && "$suffix" != "$pg_name" ]] && ! tf_contains "random_string.db_suffix"; then
+              terraform import random_string.db_suffix "$suffix"
+            fi
+            import_if_exists "azurerm_postgresql_flexible_server_database.app_db" "${pg_id}/databases/appdb"
+            import_if_exists "azurerm_postgresql_flexible_server_firewall_rule.azure_services" "${pg_id}/firewallRules/allow-azure-services"
+            import_if_exists "azurerm_postgresql_flexible_server_firewall_rule.vm_public_ip" "${pg_id}/firewallRules/allow-vm"
           fi
 
       - name: Terraform apply
