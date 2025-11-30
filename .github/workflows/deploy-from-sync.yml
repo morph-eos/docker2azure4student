@@ -282,7 +282,7 @@ jobs:
             import_if_exists "azurerm_postgresql_flexible_server_database.app_db" "${pg_id}/databases/appdb"
             import_if_exists "azurerm_postgresql_flexible_server_firewall_rule.azure_services" "${pg_id}/firewallRules/allow-azure-services"
             if [[ "${VM_PUBLIC_IP_STATIC,,}" == "true" ]]; then
-              import_if_exists "azurerm_postgresql_flexible_server_firewall_rule.vm_public_ip" "${pg_id}/firewallRules/allow-vm"
+              import_if_exists "azurerm_postgresql_flexible_server_firewall_rule.vm_public_ip[0]" "${pg_id}/firewallRules/allow-vm"
             else
               echo "Skipping VM firewall rule import: vm_public_ip_static is false"
             fi
