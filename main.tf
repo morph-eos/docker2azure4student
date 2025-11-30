@@ -10,6 +10,10 @@ resource "random_string" "db_suffix" {
   length  = 5
   special = false
   upper   = false
+
+  lifecycle {
+    ignore_changes = [special, upper]
+  }
 }
 
 resource "azurerm_virtual_network" "main" {
