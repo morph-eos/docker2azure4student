@@ -130,7 +130,7 @@ jobs:
         working-directory: ${{ env.TERRAFORM_WORKING_DIR }}
         run: |
           set -euo pipefail
-          python ./scripts/tfvars_meta.py terraform.tfvars subscription_id environment_name > vars.tmp
+          python ./scripts/tfvars_meta.py terraform.tfvars subscription_id environment_name vm_public_ip_static > vars.tmp
           while IFS='=' read -r key value; do
             echo "${key}=${value}" >> "$GITHUB_OUTPUT"
             case "$key" in
@@ -139,6 +139,9 @@ jobs:
                 ;;
               environment_name)
                 echo "ENVIRONMENT_NAME=${value}" >> "$GITHUB_ENV"
+                ;;
+              vm_public_ip_static)
+                echo "VM_PUBLIC_IP_STATIC=${value}" >> "$GITHUB_ENV"
                 ;;
             esac
           done < vars.tmp
@@ -278,7 +281,11 @@ jobs:
             fi
             import_if_exists "azurerm_postgresql_flexible_server_database.app_db" "${pg_id}/databases/appdb"
             import_if_exists "azurerm_postgresql_flexible_server_firewall_rule.azure_services" "${pg_id}/firewallRules/allow-azure-services"
-            import_if_exists "azurerm_postgresql_flexible_server_firewall_rule.vm_public_ip" "${pg_id}/firewallRules/allow-vm"
+            if [[ "${VM_PUBLIC_IP_STATIC,,}" == "true" ]]; then
+              import_if_exists "azurerm_postgresql_flexible_server_firewall_rule.vm_public_ip" "${pg_id}/firewallRules/allow-vm"
+            else
+              echo "Skipping VM firewall rule import: vm_public_ip_static is false"
+            fi
           fi
 
       - name: Terraform apply

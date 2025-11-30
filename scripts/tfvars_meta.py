@@ -25,14 +25,25 @@ def read_tfvars(path: pathlib.Path) -> str:
         raise SystemExit(f"terraform tfvars file not found: {path}") from exc
 
 
+def clean_value(raw: str) -> str:
+    value = raw.strip()
+    # Drop inline comments (simple heuristic: anything after #)
+    if "#" in value:
+        value = value.split("#", 1)[0].strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
+        value = value[1:-1]
+    return value.strip()
+
+
 def extract_values(content: str, keys: Iterable[str]) -> list[str]:
     results: list[str] = []
     for key in keys:
-        pattern = re.compile(rf"^\s*{re.escape(key)}\s*=\s*\"([^\"]+)\"", re.MULTILINE)
+        pattern = re.compile(rf"^\s*{re.escape(key)}\s*=\s*(.+)$", re.MULTILINE)
         match = pattern.search(content)
         if not match:
             raise SystemExit(f"Missing '{key}' in terraform.tfvars")
-        results.append(f"{key}={match.group(1)}")
+        value = clean_value(match.group(1))
+        results.append(f"{key}={value}")
     return results
 
 
