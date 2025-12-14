@@ -487,6 +487,7 @@ jobs:
     if: always()
     permissions:
       contents: write
+      actions: write
     steps:
       - name: Delete sync branch
         if: ${{ startsWith(needs.deploy.outputs.sync_branch, 'sync/') }}
