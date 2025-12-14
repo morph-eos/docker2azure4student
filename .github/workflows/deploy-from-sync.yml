@@ -130,7 +130,7 @@ jobs:
         working-directory: ${{ env.TERRAFORM_WORKING_DIR }}
         run: |
           set -euo pipefail
-          python ./scripts/tfvars_meta.py terraform.tfvars subscription_id environment_name vm_public_ip_static > vars.tmp
+          python ./scripts/tfvars_meta.py terraform.tfvars subscription_id environment_name vm_public_ip_static db_admin_username db_admin_password > vars.tmp
           while IFS='=' read -r key value; do
             echo "${key}=${value}" >> "$GITHUB_OUTPUT"
             case "$key" in
@@ -142,6 +142,14 @@ jobs:
                 ;;
               vm_public_ip_static)
                 echo "VM_PUBLIC_IP_STATIC=${value}" >> "$GITHUB_ENV"
+                ;;
+              db_admin_username)
+                printf '::add-mask::%s\n' "$value"
+                echo "DB_ADMIN_USERNAME=${value}" >> "$GITHUB_ENV"
+                ;;
+              db_admin_password)
+                printf '::add-mask::%s\n' "$value"
+                echo "DB_ADMIN_PASSWORD=${value}" >> "$GITHUB_ENV"
                 ;;
             esac
           done < vars.tmp
@@ -302,6 +310,13 @@ jobs:
             exit 1
           fi
           echo "vm_ip=$VM_IP" >> "$GITHUB_OUTPUT"
+          DB_HOST=$(terraform output -raw database_fqdn)
+          if [[ -z "$DB_HOST" ]]; then
+            echo "Unable to read database_fqdn output" >&2
+            exit 1
+          fi
+          echo "db_host=$DB_HOST" >> "$GITHUB_OUTPUT"
+          echo "DB_HOST=$DB_HOST" >> "$GITHUB_ENV"
 
       - name: Temporarily open SSH
         id: temp-ssh
@@ -381,6 +396,19 @@ jobs:
             exit 1
           fi
           echo "$APP_ENV_VARS_B64" | base64 -d > app.env
+
+      - name: Append database connection string
+        env:
+          DB_HOST: ${{ steps.tf-outputs.outputs.db_host }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${DB_HOST:-}" || -z "${DB_ADMIN_USERNAME:-}" || -z "${DB_ADMIN_PASSWORD:-}" ]]; then
+            echo "Database connection details are missing" >&2
+            exit 1
+          fi
+          conn="Host=${DB_HOST};Port=5432;Username=${DB_ADMIN_USERNAME};Password=${DB_ADMIN_PASSWORD};Database=postgres;SslMode=Require"
+          printf '::add-mask::%s\n' "$conn"
+          printf '\nPOSTGRES_CONNECTION_STRING=%s\n' "$conn" >> app.env
 
       - name: Start SSH agent
         uses: webfactory/ssh-agent@v0.9.0
