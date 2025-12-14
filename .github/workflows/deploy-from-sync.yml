@@ -435,12 +435,13 @@ jobs:
         env:
           VM_IP: ${{ steps.tf-outputs.outputs.vm_ip }}
         run: |
-          ssh -o StrictHostKeyChecking=no ${{ env.VM_SSH_USERNAME }}@${VM_IP} <<'EOF'
+          ssh -T -o StrictHostKeyChecking=no ${{ env.VM_SSH_USERNAME }}@${VM_IP} 'bash -s' <<'EOF'
             set -euo pipefail
             if command -v docker >/dev/null 2>&1; then
               exit 0
             fi
             echo 'Docker not found; installing...'
+            export DEBIAN_FRONTEND=noninteractive
             sudo apt-get update
             sudo apt-get install -y ca-certificates curl gnupg lsb-release
             sudo install -m 0755 -d /etc/apt/keyrings
