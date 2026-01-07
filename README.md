@@ -1,116 +1,110 @@
-# Terraform blueprint for student-friendly Azure deployment
+# Terraform blueprint for the student-friendly Azure stack
 
-This folder contains an opinionated Terraform setup that provisions everything needed to run a containerized web API plus a managed PostgreSQL database on Azure, keeping the footprint within the Azure for Students free tier limits as much as possible.
+This repository contains the Terraform code that stands up a small Azure footprint tailored for Azure for Students subscriptions: one Linux VM that runs your containerized workload and a managed PostgreSQL Flexible Server, surrounded by automation to keep costs predictable and provide self-service backups.
 
-## What gets created
+## Architecture overview
 
-- Resource Group scoped to a single region (default: France Central).
-- Virtual network with a subnet and a lightweight NSG (HTTP/HTTPS always open, SSH restricted to the CIDRs you provide).
-- Public IP, NIC, and a small Ubuntu-based VM (default size `Standard_B1s`) ready to host your containerized workload. The public IP is dynamic by default, but it can be switched to static via `vm_public_ip_static` when you need a stable endpoint.
-- VM OS disk fixed at 64 GB Premium SSD P6, which matches the free-tier SKU available in Azure for Students. Increasing the disk size moves you out of the free tier.
-- Automation runbook to create on-demand snapshots of the VM OS disk (no Recovery Services vault involved) so you can create restore points when you need them.
-- Azure Automation account created only when required, with optional runbooks to start/stop the VM on a schedule and a daily job that automatically removes snapshots older than the configured retention window.
-- Azure Database for PostgreSQL Flexible Server on the Basic SKU with backups enabled* and storage sized to stay within the free limits when `db_auto_grow_enabled = false`.
-- Automation runbook (optional) that triggers a managed PostgreSQL backup every evening to add an extra safety net on top of point-in-time restore.
-- Firewall rules so the VM (when using a static public IP) and Azure services can securely reach the database.
-- Opinionated outputs (SSH command, DB connection string, etc.) to simplify hand-off to application teams.
+Resources are deployed inside a single resource group whose name is derived from `environment_name` (normalized and truncated to 45 characters):
 
-\* You can further shrink costs by pausing the DB or switching to burstable SKUs when available in your region.
+- **Networking** – A /16 virtual network with one subnet dedicated to the VM. The NSG keeps HTTP/HTTPS open and limits SSH to the CIDR list declared in `allowed_admin_cidrs`.
+- **Compute** – An Ubuntu 22.04 LTS VM (`azurerm_linux_virtual_machine.app`) with a 64 GB Premium SSD OS disk. Only SSH keys are accepted; password auth stays disabled.
+- **Public ingress** – A basic SKU public IP (dynamic by default, switchable to static) and a NIC wired to the VM subnet.
+- **Automation** – An Azure Automation account is created only when at least one automation feature is enabled. Runbooks handle VM start/stop schedules, ad-hoc snapshots, snapshot cleanup, and PostgreSQL manual backups.
+- **Database** – Azure Database for PostgreSQL Flexible Server using the Basic B1ms SKU. Storage is set to 32 GB and `db_auto_grow_enabled = false` by default to stay within the free tier. Terraform also creates the default database (`appdb`) plus firewall rules for Azure services and (optionally) the VM public IP.
+- **Convenience outputs** – SSH command, VM IP, and PostgreSQL connection strings are exported so application teams do not need to hunt for them in the portal.
 
-## Getting started
+## Automation toggles
 
-1. Authenticate against Azure (Azure CLI is the simplest option):
+| Feature | Variables | What it does |
+| --- | --- | --- |
+| VM daily schedule | `vm_schedule_enabled`, `vm_schedule_start_time`, `vm_schedule_stop_time`, `vm_schedule_timezone` | Creates Automation runbooks + schedules that start and stop the VM every day to save credits. |
+| Manual VM snapshot | `vm_snapshot_runbook_enabled` | Deploys the `*-snapshot` runbook so you can trigger OS disk snapshots on demand without a Recovery Services vault. |
+| Snapshot cleanup | `vm_snapshot_cleanup_enabled`, `vm_snapshot_retention_days`, `vm_snapshot_cleanup_time`, `vm_snapshot_cleanup_timezone` | Schedules a cleanup runbook that deletes snapshots older than your retention window. |
+| PostgreSQL on-demand backup | `db_backup_enabled`, `db_backup_time`, `db_backup_timezone` | Adds a runbook + schedule that calls the Flexible Server REST API to create an extra backup once per day. |
+
+Set the boolean flags to `false` when you do not need a capability; Terraform will skip the related Automation modules, runbooks, schedules, and job bindings.
+
+## Prerequisites
+
+- Terraform >= 1.5 and the Azure CLI installed locally.
+- An Azure subscription where you can create a service principal or use your CLI session (`az login`).
+- An SSH public key (ed25519 or RSA) that will become the only authentication method for the VM.
+- Optional: Docker and jq if you want to reproduce the GitHub Actions workflow locally.
+
+## Configure variables
+
+1. Copy the template and adjust the values:
 
    ```bash
-   az login
-   az account set --subscription <your-subscription-id>
-   ```
-
-2. Copy the variable template and fill in the blanks (especially secrets such as the DB password and SSH key):
-
-   ```bash
-   cd /Users/morpheus/Codice/docker2azure4student
+   cd /home/morph-eos/Codice/docker2azure4student
    cp terraform.tfvars.example terraform.tfvars
    ```
 
-3. Review/adapt the defaults in `variables.tf` if needed (e.g., change region, VM size, container image, or open ports).
-4. Launch Terraform:
+2. Edit `terraform.tfvars` and provide:
+   - `subscription_id` / `tenant_id` when you are not relying on the logged-in Azure CLI identity.
+   - `environment_name`, `location`, and your SSH public key (`admin_ssh_public_key`).
+   - Database credentials (`db_admin_username`, `db_admin_password`).
+   - Any CIDR ranges that should reach the VM via SSH/HTTP/HTTPS.
+
+3. Whenever a pipeline needs to read a subset of values (subscription ID, environment name, etc.), run the helper script:
 
    ```bash
-   terraform init
-   terraform plan
-   terraform apply
+   python scripts/tfvars_meta.py terraform.tfvars subscription_id environment_name
    ```
 
-5. Once the apply completes, grab the outputs to connect via SSH or configure your application to use the managed database.
+   It prints `key=value` pairs and fails if any key is missing, which is handy inside GitHub Actions.
 
-## Key variables
-
-| Variable | Purpose |
-| --- | --- |
-| `environment_name` | Prefix for every Azure resource (no private app names are baked in). |
-| `admin_ssh_public_key` | SSH key allowed on the VM; generate one with `ssh-keygen` if you don't have it yet. |
-| `vm_http_port` | External HTTP port opened on the VM. HTTPS is controlled through `vm_https_port`. |
-| `automation_location` | Region that hosts Azure Automation (defaults to `eastus`, one of the allowed Student-plan regions). |
-| `vm_schedule_*` | Toggle and timezone/start/stop times that control the optional daily start/stop schedule for the VM (disabled by default). |
-| `vm_public_ip_static` | If `true`, allocates a static public IP; by default a dynamic IP is used to stay within the free tier. |
-| `allowed_admin_cidrs` | IPv4 CIDR blocks with SSH access. Leave empty to disable SSH from the internet and rely on privileged Azure Bastion or similar services. |
-| `db_admin_*` settings | Credentials + sizing for the PostgreSQL flexible server. |
-| `db_storage_mb` / `db_auto_grow_enabled` | Configures the PostgreSQL server storage size (default 32 GB). Keep `db_auto_grow_enabled = false` to remain within the free tier and avoid automatic expansion beyond 32 GB. |
-| `db_zone` | Availability zone of the PostgreSQL flexible server (defaults to `1` to match the initial deployment). |
-| `vm_snapshot_runbook_enabled` | Deploys the Automation runbook that creates manual snapshots of the VM OS disk instead of relying on Azure Backup. |
-| `vm_snapshot_cleanup_enabled` | When `true`, deploys the runbook and schedule that automatically delete snapshots older than `vm_snapshot_retention_days`. |
-| `vm_snapshot_retention_days` | Number of days to keep snapshots before they are deleted by the cleanup job (default 90). |
-| `vm_snapshot_cleanup_time` / `vm_snapshot_cleanup_timezone` | Time of day and timezone for the daily snapshot cleanup job. |
-| `db_backup_*` | Controls the daily Automation job that triggers a managed PostgreSQL backup (set `db_backup_enabled = false` if you only want the default PITR window). |
-
-Check `terraform.tfvars.example` for a quick starting point.
-
-## Operational notes
-
-- After Terraform finishes, SSH into the VM (see `ssh_connection_string` output) and run whatever bootstrap you need (install Docker, configure your container runtime, copy TLS certs, etc.). Keeping this step manual avoids surprises and lets you tailor the host exactly as required.
-- The GitHub Actions deployment binds `/etc/letsencrypt` from the VM into the container (read/write) so the app can both read existing certificates and generate/renew new ones in place. Keep those files synchronized with your issuance flow.
-- Networking stays simple on purpose: no load balancers, no private DNS. Add them once you exceed the free tiers.
-- Database firewall, when using a static public IP, restricts access to the VM public IP plus the special `0.0.0.0` rule required for Azure services provisioning. When using a dynamic IP, the dedicated firewall rule is not created and you rely on the "Allow Azure services" rule; in that case consider switching to a static IP or adding specific firewall rules before exposing the database to the internet.
-- To stay within the PostgreSQL free tier (750 B1ms hours + 32 GB storage + 32 GB backup), keep `db_auto_grow_enabled = false`, use `db_storage_mb = 32768` or less, and consider stopping the server when not in use.
-- Destroying the stack (`terraform destroy`) will delete the database as well—export backups before running it in production-like environments.
-- The Automation schedule is optional (disabled by default); the manual snapshot runbook is always available and the daily cleanup job (also optional) automatically deletes snapshots older than the configured retention window.
-- To create an OS disk snapshot, open the Automation account, select the `*-snapshot` runbook, click **Start**, and provide `resourceGroupName` and `vmName`. Each snapshot name includes the chosen prefix and a timestamp. The same account hosts the `*-snapshot-cleanup` runbook, which runs on schedule (or on demand) and removes snapshots older than the configured retention window.
-
-### Suggested manual bootstrap (optional)
+## Deploy the stack
 
 ```bash
-# from your laptop
-ssh azureuser@<vm_public_ip>
+az login
+az account set --subscription <subscription-id>
 
-# on the VM
-sudo apt update && sudo apt install -y docker.io docker-compose
-sudo usermod -aG docker azureuser && newgrp docker
-
-# example: create env file with DB outputs (fill values from terraform output)
-cat <<'EOF' > ~/app.env
-DATABASE_HOST=<value_from_output>
-DATABASE_NAME=appdb
-DATABASE_USER=<username@server>
-DATABASE_PASSWORD=<your_password>
-DATABASE_PORT=5432
-EOF
-
-docker run -d --name webapp --restart unless-stopped --env-file ~/app.env -p 80:8080 ghcr.io/your-org/your-api:latest
+terraform init
+terraform plan
+terraform apply
 ```
+
+Terraform will provision every resource listed above. Use `terraform destroy` when you no longer need the environment (remember to export database data beforehand).
+
+## Outputs and what to do with them
+
+- `resource_group_name` – Use it to scope Azure CLI commands after deployment.
+- `vm_public_ip` / `ssh_connection_string` – Connect to the VM and install runtime dependencies (Docker, certbot, etc.).
+- `database_fqdn` / `database_connection_string` – Configure your application or connection pools. The connection string uses TLS (`sslmode=require`).
+
+## Day-2 operations
+
+- **First login** – SSH into the VM, install Docker, and add your user to the `docker` group. The GitHub workflow can perform these steps automatically, but doing it once manually is useful during bring-up.
+- **Snapshots** – Open the Automation account, run the `*-snapshot` runbook, and provide the resource group plus VM name. Names are prefixed with `manual-<timestamp>` by default.
+- **Cleanup** – When enabled, the `*-snapshot-cleanup` runbook runs daily and deletes snapshots older than `vm_snapshot_retention_days`. You can run it manually as well.
+- **Database backups** – Terraform configures platform backups (PITR) through `backup_retention_days`. Enabling the custom backup runbook gives you an extra manual restore point without touching the portal.
+- **Firewall adjustments** – Update `allowed_admin_cidrs` and reapply Terraform whenever admins rotate networks. If you switch to a static public IP, Terraform will automatically add the database firewall rule that matches it.
+
+## GitHub Actions integration (high level)
+
+The workflow at `.github/workflows/deploy-from-sync.yml` expects a short-lived branch named `sync/...` that contains a `sync-bundle/` directory with your application artifacts and Dockerfile. During CI the workflow:
+
+1. Recreates `terraform.tfvars` from the `TFVARS_B64` secret and runs `terraform apply`.
+2. Builds and pushes a container image using the bundle provided by the private application repository.
+3. Copies the `.env` file derived from `APP_ENV_VARS_B64` to the VM, then redeploys the container via Docker over SSH.
+4. Always deletes the temporary NSG rule and the `sync/...` branch when it finishes.
+
+Refer to `AUTOMATION.md` for the full automation playbook, including every required secret and how the two repositories (private app vs public infra) coordinate.
 
 ## Repository layout
 
 ```text
 .
-├── main.tf                # End-to-end infrastructure definition
-├── variables.tf           # Typed variables with safe defaults
-├── locals.tf              # Helper to normalize the naming prefix
-├── outputs.tf             # Helpful connection details
+├── main.tf                # Azure resources (RG, VNet, VM, Automation, PostgreSQL)
+├── variables.tf           # Input variables with defaults and docs
+├── locals.tf              # Naming helpers + schedule timestamps
+├── outputs.tf             # Connection details for operators and CI
 ├── providers.tf / versions.tf
+├── scripts/tfvars_meta.py # Utility used by CI to read tfvars metadata
 ├── terraform.tfvars.example
-├── .gitignore
-└── README.md
+├── README.md
+└── AUTOMATION.md
 ```
 
-This project is intentionally generic, so you can pair it with any containerized workload without ever exposing private solution names.
+Use this repo as the public-facing IaC source while keeping your application code private; the GitHub workflow handles the hand-off between the two worlds.

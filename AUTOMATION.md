@@ -1,117 +1,95 @@
-# Automation playbook: dual-repo deployment
+# Automation playbook: app repo ↔ infra repo
 
-This document describes how to connect the private application repository ("App repo") with the public infrastructure repository (`docker2azure4student`) using GitHub Actions. The workflow keeps application code private by syncing it through a short-lived branch in the infra repo and deleting it as soon as the deployment finishes.
+This guide explains how the private application repository and this public Terraform repository collaborate to deploy code to Azure without leaking proprietary sources. The flow relies on short-lived `sync/...` branches that carry application artifacts only for the duration of the deployment.
 
-## Goals
+## Roles & responsibilities
 
-- Package the private application source, build context, and runtime configuration without disclosing it in the public history of `docker2azure4student`.
-- Reuse the Terraform stack already defined in this repo to make sure VM, Automation, and PostgreSQL stay aligned with the Azure for Students footprint.
-- Deliver an automated Docker build + VM rollout with zero manual steps once code is merged in the App repo.
-- Enforce branch hygiene so each sync branch is removed automatically, keeping the infra repo history clean.
-
-## Repository roles
-
-| Repository | Visibility | Responsibilities |
+| Repository | Purpose | Key artifacts |
 | --- | --- | --- |
-| App repo (private) | Private | Source code, Docker context, runtime secrets (via GitHub Actions secrets). Builds, signs, and transfers sanitized bundles to the infra repo. |
-| `docker2azure4student` | Public or internal | Hosts Terraform IaC, deployment scripts, and receives short-lived sync branches that contain the sanitized application bundle. Runs Terraform apply, builds/pushes containers, and deploys to the VM. |
+| **Private application repo** | Builds and tests the app, produces a sanitized bundle (`sync-bundle/`) with compiled binaries, Dockerfile, and `manifest.json`, and pushes it to a temporary branch inside `docker2azure4student`. | Workflow **A** (maintained in the private repo). |
+| **docker2azure4student** | Holds Terraform IaC, automation scripts, and the GitHub Action that provisions Azure resources and redeploys the VM using the received bundle. Cleans up the temporary branch afterwards. | Workflow **B** ([.github/workflows/deploy-from-sync.yml](.github/workflows/deploy-from-sync.yml)). |
 
-> **Note:** If `docker2azure4student` must stay public and GitHub does not offer private branches for your plan, create a private fork (e.g., `docker2azure4student-sync`) and run the workflow there. The steps below remain unchanged; only the target repo URL differs.
+Keep this repository public (or internal) to share Terraform modules, but run Workflow A from a private repo so application sources never leave your perimeter.
 
-## Workflow A – Private application repository
+## Workflow A (private repo) – what to implement
 
-**Triggers:**
+1. Trigger on `push` to the protected branch (usually `main`) and optionally on `workflow_dispatch`.
+2. Build/publish the application. The existing environment uses .NET, but the Terraform side is agnostic as long as you produce the right artifacts.
+3. Create `sync-bundle/` with at least:
+   - `Dockerfile` – Runtime-only Dockerfile that copies the published output into the base image expected by your app (e.g., `mcr.microsoft.com/dotnet/aspnet:8.0`).
+   - `manifest.json` – Include `sourceRepo`, `commit`, `imageTag`, and any metadata you want surfaced later.
+   - `publish/` (or equivalent) – The files copied by the Dockerfile.
+4. Clone `docker2azure4student`, checkout `main`, create a new branch named `sync/<run-id>-<short-sha>`, copy `sync-bundle/` into the repo root, and push.
+5. Optionally delete local bundle files to avoid lingering secrets.
 
-- `push` on `main` (or whichever protected branch you prefer).
-- Manual `workflow_dispatch` with an optional reason.
+> Suggested environment variables: `INFRA_REPO`, `INFRA_REPO_DEFAULT_BRANCH`, `SYNC_BRANCH_PREFIX`, and `INFRA_REPO_PAT` (fine-grained PAT with `contents:write`).
 
-**Secrets required in the application repository:**
+## Workflow B (this repo) – deploy-from-sync.yml
 
-| Secret | Purpose |
+### Triggers
+
+- `push` to any `sync/**` branch (originating from Workflow A).
+- `workflow_dispatch` with a `sync_branch` input to redeploy a specific bundle.
+
+### Required secrets
+
+| Secret | Description |
 | --- | --- |
-| `INFRA_REPO_PAT` | Fine-scoped PAT (or GitHub App token) with `contents:write` on `M04ph3u2/docker2azure4student` (or the fork you target). |
+| `AZURE_CREDENTIALS` | JSON produced by `az ad sp create-for-rbac --sdk-auth` so `azure/login` can obtain tokens. Scope it to the subscription hosting the Terraform stack. |
+| `TFVARS_B64` | Base64 string (no newlines) of the **entire** `terraform.tfvars`. Every Terraform input—including SSH key, DB password, toggles—is read from this file. |
+| `TF_BACKEND_CONFIG` *(optional)* | Multiline blob copied to `backend.hcl` before `terraform init`. Use it to point Terraform to remote state (e.g., Azure Storage). Leave empty to keep local state. |
+| `IMAGE_REGISTRY` / `IMAGE_NAME` | Registry namespace + repository used in the `docker build` step (for GHCR: `ghcr.io/<org>` and `<repo>`). |
+| `REGISTRY_LOGIN_SERVER` | Host passed to `docker login` (e.g., `ghcr.io` or `<acr>.azurecr.io`). |
+| `CONTAINER_REGISTRY_USERNAME` / `CONTAINER_REGISTRY_PASSWORD` | Credentials valid both on the GitHub runner and on the VM (used during `docker login` inside SSH). |
+| `APP_ENV_VARS_B64` | Base64 string for the `.env` file copied to the VM (contains app runtime secrets). |
+| `VM_SSH_USERNAME` | Linux username created on the VM (matches `var.vm_admin_username`). |
+| `VM_SSH_KEY` | Private key able to log into the VM (the corresponding public key is stored in Terraform). |
 
-**What the workflow actually does:**
+### Creating TFVARS_B64 and APP_ENV_VARS_B64
 
-1. Restores the toolchains declared in the app repo workflow (Node, .NET, etc.), then runs the project-specific tests/build/publish steps.
-2. Produces a sanitized bundle under `artifacts/bundle/` containing:
-   - `publish/` (self-contained binaries produced by `dotnet publish`).
-   - A runtime-only Dockerfile that simply copies the `publish/` folder into `mcr.microsoft.com/dotnet/aspnet:8.0`.
-   - `manifest.json` with the source repository, commit SHA, GitHub run ID, and computed image tag (short SHA).
-3. Clones the infra repo, checks out its default branch (`main` by default), and creates a short-lived branch named `sync/<run-id>-<short-sha>` that **keeps all the Terraform files** and adds the bundle under `sync-bundle/`.
-4. Pushes the branch with only the bundle folder staged (`git add sync-bundle`) so the rest of the repository stays untouched.
-5. Cleans local artifacts.
+```bash
+# terraform.tfvars
+base64 -w0 terraform.tfvars > TFVARS.b64
 
-> 📌 Because the branch always builds on top of `main`, Terraform, documentation, and scripts stay available to the infra workflow while your private application source never leaves the app repo.
+# application env file
+base64 -w0 app.env > APP_ENV_VARS.b64
+```
 
-You can customize the destination repo/branch by editing the `INFRA_REPO`, `INFRA_REPO_DEFAULT_BRANCH`, and `SYNC_BRANCH_PREFIX` env values at the top of the workflow file.
+On macOS replace `-w0` with `| tr -d '\n'`. Paste the resulting strings into their respective secrets. Recreate them whenever the source files change.
 
-## Workflow B – Infra repo (`docker2azure4student/.github/workflows/deploy-from-sync.yml`)
+### Job breakdown
 
-**Triggers:**
+1. **Resolve branch and checkout** – `sync-branch` step detects the branch to deploy (from the push ref or `workflow_dispatch` input) and `actions/checkout` grabs its files.
+2. **Restore configuration** – `terraform.tfvars` is reconstructed from `TFVARS_B64`. If `TF_BACKEND_CONFIG` is provided, the workflow writes it to `backend.hcl` and passes `-backend-config=backend.hcl` to `terraform init`.
+3. **Terraform plan/apply** – `hashicorp/setup-terraform` installs Terraform, the workflow logs into Azure via `azure/login`, and `terraform apply -auto-approve` provisions/updates the stack. Before applying, the script `scripts/tfvars_meta.py` extracts metadata (subscription ID, environment name, flags) used to import existing resources when needed.
+4. **Outputs + NSG window** – The pipeline reads `vm_public_ip` and `database_fqdn`. It temporarily adds an NSG rule (`gha-temp-<run-id>`) that allows SSH from the runner so Docker commands can be executed remotely; the rule is deleted at the end regardless of success.
+5. **Build & push image** – The runner logs into the container registry, builds `sync-bundle/Dockerfile`, tags the image as `${IMAGE_REGISTRY}/${IMAGE_NAME}:${imageTag}`, and pushes it.
+6. **Prepare runtime secrets** – `APP_ENV_VARS_B64` is decoded into `app.env`. The workflow appends a `POSTGRES_CONNECTION_STRING` (built from Terraform outputs) so the container can reach the managed database.
+7. **SSH deployment** – Using the provided private key, the workflow ensures Docker is installed on the VM, copies `app.env`, logs into the same registry from the VM, pulls the new image, and runs it as `${CONTAINER_SERVICE_NAME}` mapping ports `80->8080` and `443->8081`. `/etc/letsencrypt` is bind-mounted so certificates survive container restarts.
+8. **Cleanup** – The temporary NSG rule is deleted even on failure. A dedicated `cleanup` job removes the `sync/...` branch via `actions/github-script` and, on success, prunes workflow logs for extra hygiene.
 
-- Automatic `push` to any `sync/**` branch (created by Workflow A).
-- Manual `workflow_dispatch` with `sync_branch` input (useful for replays).
+### Runtime environment variables
 
-**Secrets required in `docker2azure4student`:**
+Inside `deploy` job you can tune:
 
-| Secret | Purpose |
-| --- | --- |
-| `AZURE_CREDENTIALS` | Output of `az ad sp create-for-rbac --name ... --sdk-auth` used by `azure/login@v2` to obtain an access token. |
-| `TFVARS_B64` | Base64-encoded `terraform.tfvars` that contains every Terraform variable (subscription/tenant IDs, environment name, SSH key, DB password, etc.). The workflow recreates `terraform.tfvars` from this secret at runtime, so no individual `TF_VAR_*` secrets are required. |
-| `TF_BACKEND_CONFIG` *(optional)* | Multiline backend configuration snippet (e.g., `storage_account_name=...`) written to `backend.hcl` when present. Leave empty to keep local state. |
-| `IMAGE_REGISTRY` / `IMAGE_NAME` | Registry hostname (including namespace) and repository name used to tag/push the container image. |
-| `REGISTRY_LOGIN_SERVER` | Host passed to `docker login` (for GHCR it's `ghcr.io`, for ACR use `<name>.azurecr.io`). |
-| `CONTAINER_REGISTRY_USERNAME` / `CONTAINER_REGISTRY_PASSWORD` | Credentials for `docker login` on both the runner (image build) and the VM (image pull). Works with ACR, GHCR, etc. |
-| `APP_ENV_VARS_B64` | Base64-encoded `.env` file recreated on the VM before launching the container. |
-| `VM_SSH_KEY` | Private SSH key with access to the target VM. |
-| `VM_SSH_USERNAME` | Username injected in Terraform outputs and used by the automation to copy files / run commands over SSH. |
+- `CONTAINER_SERVICE_NAME` (default `app-service`).
+- `CONTAINER_HTTP_PORT` / `CONTAINER_INTERNAL_HTTP_PORT` (default `80/8080`).
+- `CONTAINER_HTTPS_PORT` / `CONTAINER_INTERNAL_HTTPS_PORT` (default `443/8081`).
 
-### Creating the `TFVARS_B64` secret
+Modify them in the workflow file if your VM exposes different ports or if you run multiple containers side by side.
 
-1. Start from `terraform.tfvars.example`, create your real `terraform.tfvars`, and keep it **out of version control**.
-2. Base64-encode the file without newlines:
+## Branch hygiene & auditing
 
-   ```bash
-   # macOS
-   base64 terraform.tfvars | tr -d '\n' | pbcopy
+1. Workflow A always pushes bundles into `sync/<timestamp>-<short-sha>` built off the `main` branch of this repo. Terraform files remain untouched in the branch, so reviewers can inspect the diff confidently.
+2. Workflow B deletes the branch in the `cleanup` job (`if: always()`). Even failed deployments remove the bundle so sensitive artifacts never linger.
+3. Every bundle must include `manifest.json` with at least `imageTag` or the workflow falls back to the commit SHA as image tag. Keep `sourceRepo`, `commit`, and `runId` fields to trace deployments end-to-end.
 
-   # Linux
-   base64 -w0 terraform.tfvars | xclip -selection clipboard
-   ```
+## Recommended hardening
 
-   (Replace the clipboard command with whatever is available on your system.)
-3. Paste the encoded string into the `TFVARS_B64` secret of the infra repository. Any time you change `terraform.tfvars`, regenerate and update this secret.
+- Store secrets in GitHub Environments with required reviewers for production subscriptions.
+- Configure a remote backend (`TF_BACKEND_CONFIG`) so CLI users and CI share the same Terraform state.
+- Rotate PATs, registry credentials, and app secrets frequently; automate via GitHub Actions OIDC + Azure Federated Credentials when possible.
+- Add post-deploy smoke tests (curl health check, database migrations) before the workflow tears down the previous container.
+- Monitor the Automation account runbooks (snapshot, cleanup, VM schedule, DB backup) through alerts so missed jobs are detected early.
 
-**Job outline implemented in `deploy-from-sync.yml`:**
-
-1. **Branch resolution + checkout** – Determines the correct sync branch (payload for manual runs, `github.ref` for pushes) and checks it out so Terraform + `sync-bundle/` files are available.
-2. **Terraform** – Logs into Azure, restores `terraform.tfvars` from `TFVARS_B64`, optionally writes `backend.hcl` from `TF_BACKEND_CONFIG`, and runs `terraform init` + `terraform apply -auto-approve`. All Terraform values now come from the reconstructed `terraform.tfvars` file, so no individual `TF_VAR_*` secrets are required.
-3. **Outputs** – Reads `vm_public_ip` so we know where to deploy and parses `sync-bundle/manifest.json` to get the image tag.
-4. **Container build** – Logs into the registry, builds the runtime image using `sync-bundle/Dockerfile`, tags it as `<IMAGE_REGISTRY>/<IMAGE_NAME>:<imageTag>`, and pushes it.
-5. **VM deployment** – Recreates the `.env` file from `APP_ENV_VARS_B64`, copies it over SSH, logs into the registry on the VM, pulls the new image, stops/removes the previous container, and runs the new one (ports `80 -> 8080`, `443 -> 8081`) while bind-mounting `/etc/letsencrypt` from the host into the container so it can read or generate TLS certificates on the shared path.
-6. **Cleanup** – A second job with `if: always()` deletes the sync branch via `actions/github-script` to guarantee that private bundles live only for the duration of the deployment.
-
-> **Container runtime knobs** – The workflow exposes `CONTAINER_SERVICE_NAME`, `CONTAINER_HTTP_PORT`, `CONTAINER_INTERNAL_HTTP_PORT`, `CONTAINER_HTTPS_PORT`, and `CONTAINER_INTERNAL_HTTPS_PORT` as job-level env vars so you can rename the container or remap ports without touching the SSH script. Adjust them directly in `deploy-from-sync.yml` (or via workflow inputs) to match your VM layout.
-
-## Branch privacy workflow
-
-1. **Scoped branches** – Each run creates `sync/<run-id>-<short-sha>` based on the infra repo default branch. The branch only adds the `sync-bundle/` folder, so Terraform and documentation stay intact but no private source code is uploaded.
-2. **Minimal exposure** – The bundle contains compiled binaries plus a runtime Dockerfile and manifest. If you need stronger guarantees, encrypt additional artifacts before committing them to `sync-bundle/`.
-3. **Automatic deletion** – The `cleanup` job deletes the branch regardless of success/failure (thanks to `if: always()`). Logs keep a trace of what happened without preserving the bundle.
-4. **Auditing** – `manifest.json` captures repo, commit, GitHub run ID, and timestamp so you can trace which version produced a deployment.
-
-## Deployment sequence
-
-1. Developer merges to the protected branch (e.g., `main`) in the private application repository (or triggers the workflow manually).
-2. Workflow A publishes the .NET backend + Angular app, writes the runtime Dockerfile + manifest inside `sync-bundle/`, and pushes a temporary branch to `docker2azure4student`.
-3. The push event automatically starts Workflow B, which keeps infrastructure in sync, builds/pushes the runtime image, and redeploys the VM.
-4. Workflow B always deletes the sync branch when it finishes so no bundle lingers in the public history.
-
-## Follow-up items
-
-- Populate every secret listed above (both repos) and rotate them periodically.
-- Decide whether to keep the infra repo public; if not, mirror it into a private fork and point `INFRA_REPO` to that remote.
-- Connect Terraform to a remote backend (fill `TF_BACKEND_CONFIG`) so pipeline/state stay consistent even when you run `terraform` locally.
-- Protect the `deploy-from-sync.yml` workflow with GitHub environments if you need manual approvals or scoped secrets.
-- Add smoke tests (HTTP health checks) after deployment before the old container is removed.
+Following this playbook keeps private code in its original repository, ensures Terraform stays the single source of truth, and automates VM deployments with minimal manual intervention.
