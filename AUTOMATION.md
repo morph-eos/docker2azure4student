@@ -2,6 +2,8 @@
 
 This guide explains how the private application repository and this public Terraform repository collaborate to deploy code to Azure without leaking proprietary sources. The flow relies on short-lived `sync/...` branches that carry application artifacts only for the duration of the deployment.
 
+> **Recommendation:** before storing any secrets, create your own private copy of this repository (private fork or mirrored repo). You keep the IaC readable for collaborators while ensuring outsiders cannot inspect workflow runs or deployment metadata.
+
 ## Roles & responsibilities
 
 | Repository | Purpose | Key artifacts |
@@ -66,7 +68,7 @@ On macOS replace `-w0` with `| tr -d '\n'`. Paste the resulting strings into the
 5. **Build & push image** – The runner logs into the container registry, builds `sync-bundle/Dockerfile`, tags the image as `${IMAGE_REGISTRY}/${IMAGE_NAME}:${imageTag}`, and pushes it.
 6. **Prepare runtime secrets** – `APP_ENV_VARS_B64` is decoded into `app.env`. The workflow appends a `POSTGRES_CONNECTION_STRING` (built from Terraform outputs) so the container can reach the managed database.
 7. **SSH deployment** – Using the provided private key, the workflow ensures Docker is installed on the VM, copies `app.env`, logs into the same registry from the VM, pulls the new image, and runs it as `${CONTAINER_SERVICE_NAME}` mapping ports `80->8080` and `443->8081`. `/etc/letsencrypt` is bind-mounted so certificates survive container restarts.
-8. **Cleanup** – The temporary NSG rule is deleted even on failure. A dedicated `cleanup` job removes the `sync/...` branch via `actions/github-script` and, on success, prunes workflow logs for extra hygiene.
+8. **Cleanup** – The temporary NSG rule is deleted even on failure. A dedicated `cleanup` job removes the `sync/...` branch via `actions/github-script` so bundles never linger in the public history.
 
 ### Runtime environment variables
 

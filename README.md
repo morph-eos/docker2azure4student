@@ -92,6 +92,8 @@ The workflow at `.github/workflows/deploy-from-sync.yml` expects a short-lived b
 
 Refer to `AUTOMATION.md` for the full automation playbook, including every required secret and how the two repositories (private app vs public infra) coordinate.
 
+> **Tip:** Clone this repository into your own private workspace (or fork it privately) before wiring up secrets. That way you keep infrastructure code readable for collaborators while preventing strangers from inspecting your workflow runs or deployment metadata.
+
 ## Repository layout
 
 ```text
