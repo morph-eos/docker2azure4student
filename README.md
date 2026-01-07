@@ -69,6 +69,7 @@ Check `terraform.tfvars.example` for a quick starting point.
 ## Operational notes
 
 - After Terraform finishes, SSH into the VM (see `ssh_connection_string` output) and run whatever bootstrap you need (install Docker, configure your container runtime, copy TLS certs, etc.). Keeping this step manual avoids surprises and lets you tailor the host exactly as required.
+- The GitHub Actions deployment binds `/etc/letsencrypt` from the VM into the container (read/write) so the app can both read existing certificates and generate/renew new ones in place. Keep those files synchronized with your issuance flow.
 - Networking stays simple on purpose: no load balancers, no private DNS. Add them once you exceed the free tiers.
 - Database firewall, when using a static public IP, restricts access to the VM public IP plus the special `0.0.0.0` rule required for Azure services provisioning. When using a dynamic IP, the dedicated firewall rule is not created and you rely on the "Allow Azure services" rule; in that case consider switching to a static IP or adding specific firewall rules before exposing the database to the internet.
 - To stay within the PostgreSQL free tier (750 B1ms hours + 32 GB storage + 32 GB backup), keep `db_auto_grow_enabled = false`, use `db_storage_mb = 32768` or less, and consider stopping the server when not in use.
