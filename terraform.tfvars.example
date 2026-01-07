@@ -12,6 +12,7 @@ vm_public_ip_static  = false
 
 # VM networking & schedule
 vm_http_port            = 80
+vm_https_port           = 443
 vm_schedule_enabled     = false
 vm_schedule_timezone    = "Europe/Rome"
 vm_schedule_start_time  = "07:00"
@@ -23,6 +24,7 @@ allowed_admin_cidrs = [
 ]
 
 # Database credentials (use a stronger password in your local tfvars!)
+# GitHub Actions derives POSTGRES_CONNECTION_STRING automatically from these fields.
 db_admin_username = "pgadmin"
 db_admin_password = "ChangeMe123!"
 db_zone           = "1"
