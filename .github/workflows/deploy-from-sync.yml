@@ -260,6 +260,15 @@ jobs:
             module_accounts_id=$(normalize_id "$(az resource show --subscription "$AZURE_SUBSCRIPTION_ID" --resource-group "$rg_name" --name "$auto_name/Az.Accounts" --resource-type "Microsoft.Automation/automationAccounts/modules" --query id -o tsv --only-show-errors 2>/dev/null || true)")
             module_compute_id=$(normalize_id "$(az resource show --subscription "$AZURE_SUBSCRIPTION_ID" --resource-group "$rg_name" --name "$auto_name/Az.Compute" --resource-type "Microsoft.Automation/automationAccounts/modules" --query id -o tsv --only-show-errors 2>/dev/null || true)")
             module_pg_id=$(normalize_id "$(az resource show --subscription "$AZURE_SUBSCRIPTION_ID" --resource-group "$rg_name" --name "$auto_name/Az.PostgreSql" --resource-type "Microsoft.Automation/automationAccounts/modules" --query id -o tsv --only-show-errors 2>/dev/null || true)")
+            if [[ -z "$module_accounts_id" ]]; then
+              module_accounts_id="${auto_id}/modules/Az.Accounts"
+            fi
+            if [[ -z "$module_compute_id" ]]; then
+              module_compute_id="${auto_id}/modules/Az.Compute"
+            fi
+            if [[ -z "$module_pg_id" ]]; then
+              module_pg_id="${auto_id}/modules/Az.PostgreSql"
+            fi
             import_if_exists "azurerm_automation_module.az_accounts[0]" "$module_accounts_id"
             import_if_exists "azurerm_automation_module.az_compute[0]" "$module_compute_id"
             import_if_exists "azurerm_automation_module.az_postgresql[0]" "$module_pg_id"
