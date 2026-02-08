@@ -189,6 +189,15 @@ jobs:
             fi
           }
 
+          normalize_id() {
+            local resource_id="$1"
+            if [[ -z "$resource_id" ]]; then
+              echo ""
+              return
+            fi
+            echo "${resource_id//resourcegroups/resourceGroups}"
+          }
+
           env_name="${ENVIRONMENT_NAME:-student-app}"
           normalized=$(printf '%s' "$env_name" | tr '[:upper:]' '[:lower:]')
           normalized=${normalized// /-}
@@ -244,13 +253,13 @@ jobs:
           import_if_exists "azurerm_linux_virtual_machine.app" "$vm_id"
 
           auto_name="${prefix}-aa"
-          auto_id=$(az resource show --subscription "$AZURE_SUBSCRIPTION_ID" --resource-group "$rg_name" --name "$auto_name" --resource-type "Microsoft.Automation/automationAccounts" --query id -o tsv --only-show-errors 2>/dev/null || true)
+          auto_id=$(normalize_id "$(az resource show --subscription "$AZURE_SUBSCRIPTION_ID" --resource-group "$rg_name" --name "$auto_name" --resource-type "Microsoft.Automation/automationAccounts" --query id -o tsv --only-show-errors 2>/dev/null || true)")
           echo "   Automation Account ID: ${auto_id:-[not found]}"
           if [[ -n "$auto_id" ]]; then
             import_if_exists "azurerm_automation_account.ops[0]" "$auto_id"
-            module_accounts_id=$(az resource show --subscription "$AZURE_SUBSCRIPTION_ID" --resource-group "$rg_name" --name "$auto_name/Az.Accounts" --resource-type "Microsoft.Automation/automationAccounts/modules" --query id -o tsv --only-show-errors 2>/dev/null || true)
-            module_compute_id=$(az resource show --subscription "$AZURE_SUBSCRIPTION_ID" --resource-group "$rg_name" --name "$auto_name/Az.Compute" --resource-type "Microsoft.Automation/automationAccounts/modules" --query id -o tsv --only-show-errors 2>/dev/null || true)
-            module_pg_id=$(az resource show --subscription "$AZURE_SUBSCRIPTION_ID" --resource-group "$rg_name" --name "$auto_name/Az.PostgreSql" --resource-type "Microsoft.Automation/automationAccounts/modules" --query id -o tsv --only-show-errors 2>/dev/null || true)
+            module_accounts_id=$(normalize_id "$(az resource show --subscription "$AZURE_SUBSCRIPTION_ID" --resource-group "$rg_name" --name "$auto_name/Az.Accounts" --resource-type "Microsoft.Automation/automationAccounts/modules" --query id -o tsv --only-show-errors 2>/dev/null || true)")
+            module_compute_id=$(normalize_id "$(az resource show --subscription "$AZURE_SUBSCRIPTION_ID" --resource-group "$rg_name" --name "$auto_name/Az.Compute" --resource-type "Microsoft.Automation/automationAccounts/modules" --query id -o tsv --only-show-errors 2>/dev/null || true)")
+            module_pg_id=$(normalize_id "$(az resource show --subscription "$AZURE_SUBSCRIPTION_ID" --resource-group "$rg_name" --name "$auto_name/Az.PostgreSql" --resource-type "Microsoft.Automation/automationAccounts/modules" --query id -o tsv --only-show-errors 2>/dev/null || true)")
             import_if_exists "azurerm_automation_module.az_accounts[0]" "$module_accounts_id"
             import_if_exists "azurerm_automation_module.az_compute[0]" "$module_compute_id"
             import_if_exists "azurerm_automation_module.az_postgresql[0]" "$module_pg_id"
@@ -288,7 +297,7 @@ jobs:
 
             auto_principal=$(az resource show --subscription "$AZURE_SUBSCRIPTION_ID" --resource-group "$rg_name" --name "$auto_name" --resource-type "Microsoft.Automation/automationAccounts" --query identity.principalId -o tsv --only-show-errors 2>/dev/null || true)
             if [[ -n "$auto_principal" ]]; then
-              role_assignment=$(az role assignment list --subscription "$AZURE_SUBSCRIPTION_ID" --assignee-object-id "$auto_principal" --scope "$rg_id" --query '[0].id' -o tsv --only-show-errors 2>/dev/null || true)
+              role_assignment=$(normalize_id "$(az role assignment list --subscription "$AZURE_SUBSCRIPTION_ID" --assignee-object-id "$auto_principal" --scope "$rg_id" --query '[0].id' -o tsv --only-show-errors 2>/dev/null || true)")
               import_if_exists "azurerm_role_assignment.automation_rg[0]" "$role_assignment"
             fi
           fi
