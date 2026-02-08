@@ -201,36 +201,36 @@ jobs:
           echo "   Resource Group: $rg_name"
           echo "   Subscription: $AZURE_SUBSCRIPTION_ID"
 
-          rg_exists=$(az group show --name "$rg_name" --subscription "$AZURE_SUBSCRIPTION_ID" --query id -o tsv 2>&1 || echo "")
+          rg_exists=$(az group show --name "$rg_name" --subscription "$AZURE_SUBSCRIPTION_ID" --query id -o tsv --only-show-errors 2>/dev/null || true)
           echo "   RG ID: ${rg_exists:-[not found]}"
           import_if_exists "azurerm_resource_group.main" "$rg_exists"
 
           vnet_name="${prefix}-vnet"
-          vnet_id=$(az network vnet show --subscription "$AZURE_SUBSCRIPTION_ID" -g "$rg_name" -n "$vnet_name" --query id -o tsv 2>&1 || echo "")
+          vnet_id=$(az network vnet show --subscription "$AZURE_SUBSCRIPTION_ID" -g "$rg_name" -n "$vnet_name" --query id -o tsv --only-show-errors 2>/dev/null || true)
           echo "   VNet ID: ${vnet_id:-[not found]}"
           import_if_exists "azurerm_virtual_network.main" "$vnet_id"
 
           subnet_name="${prefix}-vm-subnet"
-          subnet_id=$(az network vnet subnet show --subscription "$AZURE_SUBSCRIPTION_ID" -g "$rg_name" --vnet-name "$vnet_name" -n "$subnet_name" --query id -o tsv 2>&1 || echo "")
+          subnet_id=$(az network vnet subnet show --subscription "$AZURE_SUBSCRIPTION_ID" -g "$rg_name" --vnet-name "$vnet_name" -n "$subnet_name" --query id -o tsv --only-show-errors 2>/dev/null || true)
           echo "   Subnet ID: ${subnet_id:-[not found]}"
           import_if_exists "azurerm_subnet.vm" "$subnet_id"
 
           nsg_name="${prefix}-vm-nsg"
-          nsg_id=$(az network nsg show --subscription "$AZURE_SUBSCRIPTION_ID" -g "$rg_name" -n "$nsg_name" --query id -o tsv 2>&1 || echo "")
+          nsg_id=$(az network nsg show --subscription "$AZURE_SUBSCRIPTION_ID" -g "$rg_name" -n "$nsg_name" --query id -o tsv --only-show-errors 2>/dev/null || true)
           echo "   NSG ID: ${nsg_id:-[not found]}"
           import_if_exists "azurerm_network_security_group.vm" "$nsg_id"
 
           pip_name="${prefix}-vm-ip-static"
-          pip_id=$(az network public-ip show --subscription "$AZURE_SUBSCRIPTION_ID" -g "$rg_name" -n "$pip_name" --query id -o tsv 2>&1 || echo "")
+          pip_id=$(az network public-ip show --subscription "$AZURE_SUBSCRIPTION_ID" -g "$rg_name" -n "$pip_name" --query id -o tsv --only-show-errors 2>/dev/null || true)
           if [[ -z "$pip_id" ]]; then
             pip_name="${prefix}-vm-ip-dynamic"
-            pip_id=$(az network public-ip show --subscription "$AZURE_SUBSCRIPTION_ID" -g "$rg_name" -n "$pip_name" --query id -o tsv 2>&1 || echo "")
+            pip_id=$(az network public-ip show --subscription "$AZURE_SUBSCRIPTION_ID" -g "$rg_name" -n "$pip_name" --query id -o tsv --only-show-errors 2>/dev/null || true)
           fi
           echo "   Public IP ($pip_name): ${pip_id:-[not found]}"
           import_if_exists "azurerm_public_ip.vm" "$pip_id"
 
           nic_name="${prefix}-vm-nic"
-          nic_id=$(az network nic show --subscription "$AZURE_SUBSCRIPTION_ID" -g "$rg_name" -n "$nic_name" --query id -o tsv 2>&1 || echo "")
+          nic_id=$(az network nic show --subscription "$AZURE_SUBSCRIPTION_ID" -g "$rg_name" -n "$nic_name" --query id -o tsv --only-show-errors 2>/dev/null || true)
           echo "   NIC ID: ${nic_id:-[not found]}"
           import_if_exists "azurerm_network_interface.vm" "$nic_id"
 
@@ -239,18 +239,21 @@ jobs:
           fi
 
           vm_name="${prefix}-vm"
-          vm_id=$(az vm show --subscription "$AZURE_SUBSCRIPTION_ID" -g "$rg_name" -n "$vm_name" --query id -o tsv 2>&1 || echo "")
+          vm_id=$(az vm show --subscription "$AZURE_SUBSCRIPTION_ID" -g "$rg_name" -n "$vm_name" --query id -o tsv --only-show-errors 2>/dev/null || true)
           echo "   VM ID: ${vm_id:-[not found]}"
           import_if_exists "azurerm_linux_virtual_machine.app" "$vm_id"
 
           auto_name="${prefix}-aa"
-          auto_id=$(az automation account show --subscription "$AZURE_SUBSCRIPTION_ID" -g "$rg_name" -n "$auto_name" --query id -o tsv 2>&1 || echo "")
+          auto_id=$(az resource show --subscription "$AZURE_SUBSCRIPTION_ID" --resource-group "$rg_name" --name "$auto_name" --resource-type "Microsoft.Automation/automationAccounts" --query id -o tsv --only-show-errors 2>/dev/null || true)
           echo "   Automation Account ID: ${auto_id:-[not found]}"
           if [[ -n "$auto_id" ]]; then
             import_if_exists "azurerm_automation_account.ops[0]" "$auto_id"
-            import_if_exists "azurerm_automation_module.az_accounts[0]" "${auto_id}/modules/Az.Accounts"
-            import_if_exists "azurerm_automation_module.az_compute[0]" "${auto_id}/modules/Az.Compute"
-            import_if_exists "azurerm_automation_module.az_postgresql[0]" "${auto_id}/modules/Az.PostgreSql"
+            module_accounts_id=$(az resource show --subscription "$AZURE_SUBSCRIPTION_ID" --resource-group "$rg_name" --name "$auto_name/Az.Accounts" --resource-type "Microsoft.Automation/automationAccounts/modules" --query id -o tsv --only-show-errors 2>/dev/null || true)
+            module_compute_id=$(az resource show --subscription "$AZURE_SUBSCRIPTION_ID" --resource-group "$rg_name" --name "$auto_name/Az.Compute" --resource-type "Microsoft.Automation/automationAccounts/modules" --query id -o tsv --only-show-errors 2>/dev/null || true)
+            module_pg_id=$(az resource show --subscription "$AZURE_SUBSCRIPTION_ID" --resource-group "$rg_name" --name "$auto_name/Az.PostgreSql" --resource-type "Microsoft.Automation/automationAccounts/modules" --query id -o tsv --only-show-errors 2>/dev/null || true)
+            import_if_exists "azurerm_automation_module.az_accounts[0]" "$module_accounts_id"
+            import_if_exists "azurerm_automation_module.az_compute[0]" "$module_compute_id"
+            import_if_exists "azurerm_automation_module.az_postgresql[0]" "$module_pg_id"
 
             delete_schedule() {
               local schedule_name="$1"
@@ -283,15 +286,15 @@ jobs:
             delete_runbook "${prefix}-snapshot"
             delete_runbook "${prefix}-snapshot-cleanup"
 
-            auto_principal=$(az automation account show --subscription "$AZURE_SUBSCRIPTION_ID" -g "$rg_name" -n "$auto_name" --query identity.principalId -o tsv 2>&1 || echo "")
+            auto_principal=$(az resource show --subscription "$AZURE_SUBSCRIPTION_ID" --resource-group "$rg_name" --name "$auto_name" --resource-type "Microsoft.Automation/automationAccounts" --query identity.principalId -o tsv --only-show-errors 2>/dev/null || true)
             if [[ -n "$auto_principal" ]]; then
-              role_assignment=$(az role assignment list --subscription "$AZURE_SUBSCRIPTION_ID" --assignee-object-id "$auto_principal" --scope "$rg_id" --query '[0].id' -o tsv 2>&1 || echo "")
+              role_assignment=$(az role assignment list --subscription "$AZURE_SUBSCRIPTION_ID" --assignee-object-id "$auto_principal" --scope "$rg_id" --query '[0].id' -o tsv --only-show-errors 2>/dev/null || true)
               import_if_exists "azurerm_role_assignment.automation_rg[0]" "$role_assignment"
             fi
           fi
 
           pg_id=$(az resource list --subscription "$AZURE_SUBSCRIPTION_ID" --resource-group "$rg_name" \
-            --resource-type "Microsoft.DBforPostgreSQL/flexibleServers" --query "[0].id" -o tsv 2>&1 || echo "")
+            --resource-type "Microsoft.DBforPostgreSQL/flexibleServers" --query "[0].id" -o tsv --only-show-errors 2>/dev/null || true)
           echo "   PostgreSQL ID: ${pg_id:-[not found]}"
           if [[ -n "$pg_id" ]]; then
             import_if_exists "azurerm_postgresql_flexible_server.db" "$pg_id"
