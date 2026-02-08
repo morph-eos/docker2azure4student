@@ -177,17 +177,16 @@ jobs:
               return
             fi
             if tf_contains "$address"; then
-              echo "State already tracks $address"
+              echo "OK: State already tracks $address"
               return
             fi
-            if [[ "$skip_check" != "true" ]]; then
-              if ! az resource show --ids "$resource_id" >/dev/null 2>&1; then
-                echo "Azure resource not found for $address ($resource_id)"
-                return
-              fi
+            echo "INFO: Attempting to import $address"
+            echo "  Resource ID: $resource_id"
+            if terraform import "$address" "$resource_id" 2>&1; then
+              echo "Successfully imported $address"
+            else
+              echo "Import failed for $address (resource may not exist or is already managed)"
             fi
-            echo "Importing $address"
-            terraform import "$address" "$resource_id"
           }
 
           env_name="${ENVIRONMENT_NAME:-student-app}"
@@ -198,31 +197,41 @@ jobs:
           rg_name="${prefix}-rg"
           rg_id="${subscription}/resourceGroups/${rg_name}"
 
-          rg_exists=$(az group show --name "$rg_name" --subscription "$AZURE_SUBSCRIPTION_ID" --query id -o tsv || true)
+          echo "INFO: Scanning Azure resources for environment: $env_name (prefix: $prefix)"
+          echo "   Resource Group: $rg_name"
+          echo "   Subscription: $AZURE_SUBSCRIPTION_ID"
+
+          rg_exists=$(az group show --name "$rg_name" --subscription "$AZURE_SUBSCRIPTION_ID" --query id -o tsv 2>&1 || echo "")
+          echo "   RG ID: ${rg_exists:-[not found]}"
           import_if_exists "azurerm_resource_group.main" "$rg_exists"
 
           vnet_name="${prefix}-vnet"
-          vnet_id=$(az network vnet show --subscription "$AZURE_SUBSCRIPTION_ID" -g "$rg_name" -n "$vnet_name" --query id -o tsv || true)
+          vnet_id=$(az network vnet show --subscription "$AZURE_SUBSCRIPTION_ID" -g "$rg_name" -n "$vnet_name" --query id -o tsv 2>&1 || echo "")
+          echo "   VNet ID: ${vnet_id:-[not found]}"
           import_if_exists "azurerm_virtual_network.main" "$vnet_id"
 
           subnet_name="${prefix}-vm-subnet"
-          subnet_id=$(az network vnet subnet show --subscription "$AZURE_SUBSCRIPTION_ID" -g "$rg_name" --vnet-name "$vnet_name" -n "$subnet_name" --query id -o tsv || true)
+          subnet_id=$(az network vnet subnet show --subscription "$AZURE_SUBSCRIPTION_ID" -g "$rg_name" --vnet-name "$vnet_name" -n "$subnet_name" --query id -o tsv 2>&1 || echo "")
+          echo "   Subnet ID: ${subnet_id:-[not found]}"
           import_if_exists "azurerm_subnet.vm" "$subnet_id"
 
           nsg_name="${prefix}-vm-nsg"
-          nsg_id=$(az network nsg show --subscription "$AZURE_SUBSCRIPTION_ID" -g "$rg_name" -n "$nsg_name" --query id -o tsv || true)
+          nsg_id=$(az network nsg show --subscription "$AZURE_SUBSCRIPTION_ID" -g "$rg_name" -n "$nsg_name" --query id -o tsv 2>&1 || echo "")
+          echo "   NSG ID: ${nsg_id:-[not found]}"
           import_if_exists "azurerm_network_security_group.vm" "$nsg_id"
 
           pip_name="${prefix}-vm-ip-static"
-          pip_id=$(az network public-ip show --subscription "$AZURE_SUBSCRIPTION_ID" -g "$rg_name" -n "$pip_name" --query id -o tsv || true)
+          pip_id=$(az network public-ip show --subscription "$AZURE_SUBSCRIPTION_ID" -g "$rg_name" -n "$pip_name" --query id -o tsv 2>&1 || echo "")
           if [[ -z "$pip_id" ]]; then
             pip_name="${prefix}-vm-ip-dynamic"
-            pip_id=$(az network public-ip show --subscription "$AZURE_SUBSCRIPTION_ID" -g "$rg_name" -n "$pip_name" --query id -o tsv || true)
+            pip_id=$(az network public-ip show --subscription "$AZURE_SUBSCRIPTION_ID" -g "$rg_name" -n "$pip_name" --query id -o tsv 2>&1 || echo "")
           fi
+          echo "   Public IP ($pip_name): ${pip_id:-[not found]}"
           import_if_exists "azurerm_public_ip.vm" "$pip_id"
 
           nic_name="${prefix}-vm-nic"
-          nic_id=$(az network nic show --subscription "$AZURE_SUBSCRIPTION_ID" -g "$rg_name" -n "$nic_name" --query id -o tsv || true)
+          nic_id=$(az network nic show --subscription "$AZURE_SUBSCRIPTION_ID" -g "$rg_name" -n "$nic_name" --query id -o tsv 2>&1 || echo "")
+          echo "   NIC ID: ${nic_id:-[not found]}"
           import_if_exists "azurerm_network_interface.vm" "$nic_id"
 
           if [[ -n "$nic_id" && -n "$nsg_id" ]]; then
@@ -230,11 +239,13 @@ jobs:
           fi
 
           vm_name="${prefix}-vm"
-          vm_id=$(az vm show --subscription "$AZURE_SUBSCRIPTION_ID" -g "$rg_name" -n "$vm_name" --query id -o tsv || true)
+          vm_id=$(az vm show --subscription "$AZURE_SUBSCRIPTION_ID" -g "$rg_name" -n "$vm_name" --query id -o tsv 2>&1 || echo "")
+          echo "   VM ID: ${vm_id:-[not found]}"
           import_if_exists "azurerm_linux_virtual_machine.app" "$vm_id"
 
           auto_name="${prefix}-aa"
-          auto_id=$(az automation account show --subscription "$AZURE_SUBSCRIPTION_ID" -g "$rg_name" -n "$auto_name" --query id -o tsv || true)
+          auto_id=$(az automation account show --subscription "$AZURE_SUBSCRIPTION_ID" -g "$rg_name" -n "$auto_name" --query id -o tsv 2>&1 || echo "")
+          echo "   Automation Account ID: ${auto_id:-[not found]}"
           if [[ -n "$auto_id" ]]; then
             import_if_exists "azurerm_automation_account.ops[0]" "$auto_id"
             import_if_exists "azurerm_automation_module.az_accounts[0]" "${auto_id}/modules/Az.Accounts"
@@ -272,30 +283,34 @@ jobs:
             delete_runbook "${prefix}-snapshot"
             delete_runbook "${prefix}-snapshot-cleanup"
 
-            auto_principal=$(az automation account show --subscription "$AZURE_SUBSCRIPTION_ID" -g "$rg_name" -n "$auto_name" --query identity.principalId -o tsv || true)
+            auto_principal=$(az automation account show --subscription "$AZURE_SUBSCRIPTION_ID" -g "$rg_name" -n "$auto_name" --query identity.principalId -o tsv 2>&1 || echo "")
             if [[ -n "$auto_principal" ]]; then
-              role_assignment=$(az role assignment list --subscription "$AZURE_SUBSCRIPTION_ID" --assignee-object-id "$auto_principal" --scope "$rg_id" --query '[0].id' -o tsv || true)
+              role_assignment=$(az role assignment list --subscription "$AZURE_SUBSCRIPTION_ID" --assignee-object-id "$auto_principal" --scope "$rg_id" --query '[0].id' -o tsv 2>&1 || echo "")
               import_if_exists "azurerm_role_assignment.automation_rg[0]" "$role_assignment"
             fi
           fi
 
           pg_id=$(az resource list --subscription "$AZURE_SUBSCRIPTION_ID" --resource-group "$rg_name" \
-            --resource-type "Microsoft.DBforPostgreSQL/flexibleServers" --query "[0].id" -o tsv || true)
+            --resource-type "Microsoft.DBforPostgreSQL/flexibleServers" --query "[0].id" -o tsv 2>&1 || echo "")
+          echo "   PostgreSQL ID: ${pg_id:-[not found]}"
           if [[ -n "$pg_id" ]]; then
             import_if_exists "azurerm_postgresql_flexible_server.db" "$pg_id"
             pg_name=$(basename "$pg_id")
             suffix=${pg_name##${prefix}-pg-}
             if [[ -n "$suffix" && "$suffix" != "$pg_name" ]] && ! tf_contains "random_string.db_suffix"; then
-              terraform import random_string.db_suffix "$suffix"
+              echo "INFO: Importing random_string.db_suffix with value: $suffix"
+              terraform import random_string.db_suffix "$suffix" 2>&1 || echo "WARN: Import failed for random_string.db_suffix"
             fi
             import_if_exists "azurerm_postgresql_flexible_server_database.app_db" "${pg_id}/databases/appdb"
             import_if_exists "azurerm_postgresql_flexible_server_firewall_rule.azure_services" "${pg_id}/firewallRules/allow-azure-services"
             if [[ "${VM_PUBLIC_IP_STATIC,,}" == "true" ]]; then
               import_if_exists "azurerm_postgresql_flexible_server_firewall_rule.vm_public_ip[0]" "${pg_id}/firewallRules/allow-vm"
             else
-              echo "Skipping VM firewall rule import: vm_public_ip_static is false"
+              echo "WARN: Skipping VM firewall rule import: vm_public_ip_static is false"
             fi
           fi
+
+          echo "OK: Import phase completed"
 
       - name: Terraform apply
         working-directory: ${{ env.TERRAFORM_WORKING_DIR }}
