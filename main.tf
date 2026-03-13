@@ -95,7 +95,7 @@ resource "azurerm_public_ip" "vm" {
   location            = var.location
   resource_group_name = azurerm_resource_group.main.name
   allocation_method   = var.vm_public_ip_static ? "Static" : "Dynamic"
-  sku                 = "Basic"
+  sku                 = "Standard"
   tags                = merge(var.tags, { component = "network" })
 
   lifecycle {
