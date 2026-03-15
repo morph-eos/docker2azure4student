@@ -10,7 +10,7 @@ Resources are deployed inside a single resource group whose name is derived from
 - **Compute** – An Ubuntu 22.04 LTS VM (`azurerm_linux_virtual_machine.app`) with a 64 GB Premium SSD OS disk. Only SSH keys are accepted; password auth stays disabled.
 - **Public ingress** – A basic SKU public IP (dynamic by default, switchable to static) and a NIC wired to the VM subnet.
 - **Automation** – An Azure Automation account is created only when at least one automation feature is enabled. Runbooks handle VM start/stop schedules, ad-hoc snapshots, snapshot cleanup, and PostgreSQL manual backups.
-- **Database** – Azure Database for PostgreSQL Flexible Server using the Basic B1ms SKU. Storage is set to 32 GB and `db_auto_grow_enabled = false` by default to stay within the free tier. Terraform also creates the default database (`appdb`) plus firewall rules for Azure services and (optionally) the VM public IP.
+- **Database** – Azure Database for PostgreSQL Flexible Server using the Basic B1ms SKU. Storage is set to 32 GB and `db_auto_grow_enabled = false` by default to stay within the free tier. Terraform also creates the default database (`postgres`) plus firewall rules for Azure services and (optionally) the VM public IP.
 - **Convenience outputs** – SSH command, VM IP, and PostgreSQL connection strings are exported so application teams do not need to hunt for them in the portal.
 
 ## Automation toggles

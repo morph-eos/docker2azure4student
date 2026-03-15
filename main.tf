@@ -515,7 +515,7 @@ resource "azurerm_postgresql_flexible_server" "db" {
 }
 
 resource "azurerm_postgresql_flexible_server_database" "app_db" {
-  name      = "appdb"
+  name      = "postgres"
   server_id = azurerm_postgresql_flexible_server.db.id
 }
 

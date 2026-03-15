@@ -322,7 +322,7 @@ jobs:
               echo "INFO: Importing random_string.db_suffix with value: $suffix"
               terraform import random_string.db_suffix "$suffix" 2>&1 || echo "WARN: Import failed for random_string.db_suffix"
             fi
-            import_if_exists "azurerm_postgresql_flexible_server_database.app_db" "${pg_id}/databases/appdb"
+            import_if_exists "azurerm_postgresql_flexible_server_database.app_db" "${pg_id}/databases/postgres"
             import_if_exists "azurerm_postgresql_flexible_server_firewall_rule.azure_services" "${pg_id}/firewallRules/allow-azure-services"
             if [[ "${VM_PUBLIC_IP_STATIC,,}" == "true" ]]; then
               import_if_exists "azurerm_postgresql_flexible_server_firewall_rule.vm_public_ip[0]" "${pg_id}/firewallRules/allow-vm"
@@ -450,7 +450,7 @@ jobs:
             printf '\nPOSTGRES_CONNECTION_STRING=%s\n' "$conn"
             printf 'POSTGRES_HOST=%s\n' "$DB_HOST"
             printf 'POSTGRES_PORT=5432\n'
-            printf 'POSTGRES_NAME=appdb\n'
+            printf 'POSTGRES_NAME=postgres\n'
             printf 'POSTGRES_USER=%s\n' "$DB_ADMIN_USERNAME"
             printf 'POSTGRES_PASSWORD=%s\n' "$DB_ADMIN_PASSWORD"
           } >> app.env
