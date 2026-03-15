@@ -445,7 +445,15 @@ jobs:
           fi
           conn="Host=${DB_HOST};Port=5432;Username=${DB_ADMIN_USERNAME};Password=${DB_ADMIN_PASSWORD};Database=postgres;SslMode=Require"
           printf '::add-mask::%s\n' "$conn"
-          printf '\nPOSTGRES_CONNECTION_STRING=%s\n' "$conn" >> app.env
+          printf '::add-mask::%s\n' "$DB_ADMIN_PASSWORD"
+          {
+            printf '\nPOSTGRES_CONNECTION_STRING=%s\n' "$conn"
+            printf 'POSTGRES_HOST=%s\n' "$DB_HOST"
+            printf 'POSTGRES_PORT=5432\n'
+            printf 'POSTGRES_NAME=appdb\n'
+            printf 'POSTGRES_USER=%s\n' "$DB_ADMIN_USERNAME"
+            printf 'POSTGRES_PASSWORD=%s\n' "$DB_ADMIN_PASSWORD"
+          } >> app.env
 
       - name: Start SSH agent
         uses: webfactory/ssh-agent@v0.9.0
