@@ -23,3 +23,14 @@ output "database_connection_string" {
   sensitive   = true
   value       = "postgresql://${var.db_admin_username}:${var.db_admin_password}@${azurerm_postgresql_flexible_server.db.fqdn}:5432/${azurerm_postgresql_flexible_server_database.app_db.name}?sslmode=require"
 }
+
+output "storage_account_name" {
+  description = "Name of the Azure Storage Account (null when blob_storage_enabled = false)."
+  value       = var.blob_storage_enabled ? azurerm_storage_account.blob[0].name : null
+}
+
+output "storage_account_key" {
+  description = "Primary access key for the Azure Storage Account (null when blob_storage_enabled = false)."
+  sensitive   = true
+  value       = var.blob_storage_enabled ? azurerm_storage_account.blob[0].primary_access_key : null
+}

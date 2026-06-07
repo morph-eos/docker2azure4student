@@ -191,3 +191,9 @@ variable "allowed_admin_cidrs" {
   type        = list(string)
   default     = []
 }
+
+variable "blob_storage_enabled" {
+  description = "If true, creates an Azure Storage Account for blob storage. The account name and primary key are exported as outputs and injected into the application environment as AZURE_ACCOUNT_NAME and AZURE_ACCOUNT_KEY."
+  type        = bool
+  default     = false
+}

@@ -10,8 +10,9 @@ Resources are deployed inside a single resource group whose name is derived from
 - **Compute** – An Ubuntu 22.04 LTS VM (`azurerm_linux_virtual_machine.app`) with a 64 GB Premium SSD OS disk. Only SSH keys are accepted; password auth stays disabled.
 - **Public ingress** – A basic SKU public IP (dynamic by default, switchable to static) and a NIC wired to the VM subnet.
 - **Automation** – An Azure Automation account is created only when at least one automation feature is enabled. Runbooks handle VM start/stop schedules, ad-hoc snapshots, snapshot cleanup, and PostgreSQL manual backups.
-- **Database** – Azure Database for PostgreSQL Flexible Server using the Basic B1ms SKU. Storage is set to 32 GB and `db_auto_grow_enabled = false` by default to stay within the free tier. Terraform also creates the default database (`appdb`) plus firewall rules for Azure services and (optionally) the VM public IP.
-- **Convenience outputs** – SSH command, VM IP, and PostgreSQL connection strings are exported so application teams do not need to hunt for them in the portal.
+- **Database** – Azure Database for PostgreSQL Flexible Server using the Basic B1ms SKU. Storage is set to 32 GB and `db_auto_grow_enabled = false` by default to stay within the free tier. Terraform also creates the default database (`postgres`) plus firewall rules for Azure services and (optionally) the VM public IP.
+- **Blob storage** – An Azure Storage Account (Standard LRS, TLS 1.2 only) is created only when `blob_storage_enabled = true`. Public blob access is disabled by default. The account name and primary key are exposed as outputs and added to the application environment as `AZURE_ACCOUNT_NAME` and `AZURE_ACCOUNT_KEY`.
+- **Convenience outputs** – SSH command, VM IP, PostgreSQL connection strings, and (when enabled) the storage account name are exported so application teams do not need to hunt for them in the portal.
 
 ## Automation toggles
 
@@ -72,6 +73,7 @@ Terraform will provision every resource listed above. Use `terraform destroy` wh
 - `resource_group_name` – Use it to scope Azure CLI commands after deployment.
 - `vm_public_ip` / `ssh_connection_string` – Connect to the VM and install runtime dependencies (Docker, certbot, etc.).
 - `database_fqdn` / `database_connection_string` – Configure your application or connection pools. The connection string uses TLS (`sslmode=require`).
+- `storage_account_name` / `storage_account_key` – Available only when `blob_storage_enabled = true`. The CI workflow automatically injects these as `AZURE_ACCOUNT_NAME` and `AZURE_ACCOUNT_KEY` into the application `.env` file.
 
 ## Day-2 operations
 
@@ -98,7 +100,7 @@ Refer to `AUTOMATION.md` for the full automation playbook, including every requi
 
 ```text
 .
-├── main.tf                # Azure resources (RG, VNet, VM, Automation, PostgreSQL)
+├── main.tf                # Azure resources (RG, VNet, VM, Automation, PostgreSQL, Storage)
 ├── variables.tf           # Input variables with defaults and docs
 ├── locals.tf              # Naming helpers + schedule timestamps
 ├── outputs.tf             # Connection details for operators and CI

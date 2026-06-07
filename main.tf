@@ -515,7 +515,7 @@ resource "azurerm_postgresql_flexible_server" "db" {
 }
 
 resource "azurerm_postgresql_flexible_server_database" "app_db" {
-  name      = "appdb"
+  name      = "postgres"
   server_id = azurerm_postgresql_flexible_server.db.id
 }
 
@@ -534,5 +534,26 @@ resource "azurerm_postgresql_flexible_server_firewall_rule" "vm_public_ip" {
 
   start_ip_address = azurerm_public_ip.vm.ip_address
   end_ip_address   = azurerm_public_ip.vm.ip_address
+}
+
+resource "random_string" "blob_suffix" {
+  count   = var.blob_storage_enabled ? 1 : 0
+  length  = 6
+  special = false
+  upper   = false
+}
+
+resource "azurerm_storage_account" "blob" {
+  count                           = var.blob_storage_enabled ? 1 : 0
+  name                            = "${substr(replace(local.prefix, "-", ""), 0, 18)}${random_string.blob_suffix[0].result}"
+  resource_group_name             = azurerm_resource_group.main.name
+  location                        = var.location
+  account_tier                    = "Standard"
+  account_replication_type        = "LRS"
+  min_tls_version                 = "TLS1_2"
+  https_traffic_only_enabled      = true
+  allow_nested_items_to_be_public = false
+
+  tags = merge(var.tags, { component = "storage" })
 }
 

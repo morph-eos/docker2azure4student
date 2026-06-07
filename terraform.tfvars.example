@@ -37,3 +37,4 @@ vm_snapshot_cleanup_enabled = true
 vm_snapshot_retention_days  = 90
 vm_snapshot_cleanup_time    = "03:00"
 vm_snapshot_cleanup_timezone = "Europe/Rome"
+blob_storage_enabled         = false

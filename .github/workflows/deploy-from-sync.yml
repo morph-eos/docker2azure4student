@@ -131,7 +131,7 @@ jobs:
         working-directory: ${{ env.TERRAFORM_WORKING_DIR }}
         run: |
           set -euo pipefail
-          python ./scripts/tfvars_meta.py terraform.tfvars subscription_id environment_name vm_public_ip_static db_admin_username db_admin_password > vars.tmp
+          python ./scripts/tfvars_meta.py terraform.tfvars subscription_id environment_name vm_public_ip_static db_admin_username db_admin_password blob_storage_enabled > vars.tmp
           while IFS='=' read -r key value; do
             echo "${key}=${value}" >> "$GITHUB_OUTPUT"
             case "$key" in
@@ -151,6 +151,9 @@ jobs:
               db_admin_password)
                 printf '::add-mask::%s\n' "$value"
                 echo "DB_ADMIN_PASSWORD=${value}" >> "$GITHUB_ENV"
+                ;;
+              blob_storage_enabled)
+                echo "BLOB_STORAGE_ENABLED=${value}" >> "$GITHUB_ENV"
                 ;;
             esac
           done < vars.tmp
@@ -322,12 +325,29 @@ jobs:
               echo "INFO: Importing random_string.db_suffix with value: $suffix"
               terraform import random_string.db_suffix "$suffix" 2>&1 || echo "WARN: Import failed for random_string.db_suffix"
             fi
-            import_if_exists "azurerm_postgresql_flexible_server_database.app_db" "${pg_id}/databases/appdb"
+            import_if_exists "azurerm_postgresql_flexible_server_database.app_db" "${pg_id}/databases/postgres"
             import_if_exists "azurerm_postgresql_flexible_server_firewall_rule.azure_services" "${pg_id}/firewallRules/allow-azure-services"
             if [[ "${VM_PUBLIC_IP_STATIC,,}" == "true" ]]; then
               import_if_exists "azurerm_postgresql_flexible_server_firewall_rule.vm_public_ip[0]" "${pg_id}/firewallRules/allow-vm"
             else
               echo "WARN: Skipping VM firewall rule import: vm_public_ip_static is false"
+            fi
+          fi
+
+          if [[ "${BLOB_STORAGE_ENABLED,,}" == "true" ]]; then
+            blob_sa_id=$(az resource list --subscription "$AZURE_SUBSCRIPTION_ID" --resource-group "$rg_name" \
+              --resource-type "Microsoft.Storage/storageAccounts" --query "[0].id" -o tsv --only-show-errors 2>/dev/null || true)
+            echo "   Storage Account ID: ${blob_sa_id:-[not found]}"
+            if [[ -n "$blob_sa_id" ]]; then
+              import_if_exists "azurerm_storage_account.blob[0]" "$blob_sa_id"
+              blob_sa_name=$(basename "$blob_sa_id")
+              prefix_no_hyphen=$(echo "$prefix" | tr -d '-')
+              prefix_no_hyphen="${prefix_no_hyphen:0:18}"
+              blob_suffix="${blob_sa_name#${prefix_no_hyphen}}"
+              if [[ -n "$blob_suffix" && "$blob_suffix" != "$blob_sa_name" ]] && ! tf_contains "random_string.blob_suffix[0]"; then
+                echo "INFO: Importing random_string.blob_suffix[0] with value: $blob_suffix"
+                terraform import 'random_string.blob_suffix[0]' "$blob_suffix" 2>&1 || echo "WARN: Import failed for random_string.blob_suffix[0]"
+              fi
             fi
           fi
 
@@ -354,6 +374,17 @@ jobs:
           fi
           echo "db_host=$DB_HOST" >> "$GITHUB_OUTPUT"
           echo "DB_HOST=$DB_HOST" >> "$GITHUB_ENV"
+
+          if [[ "${BLOB_STORAGE_ENABLED,,}" == "true" ]]; then
+            BLOB_ACCOUNT_NAME=$(terraform output -raw storage_account_name 2>/dev/null || true)
+            if [[ -n "$BLOB_ACCOUNT_NAME" ]]; then
+              BLOB_ACCOUNT_KEY=$(terraform output -raw storage_account_key 2>/dev/null || true)
+              printf '::add-mask::%s\n' "$BLOB_ACCOUNT_KEY"
+              echo "blob_account_name=$BLOB_ACCOUNT_NAME" >> "$GITHUB_OUTPUT"
+              echo "BLOB_ACCOUNT_NAME=$BLOB_ACCOUNT_NAME" >> "$GITHUB_ENV"
+              echo "BLOB_ACCOUNT_KEY=$BLOB_ACCOUNT_KEY" >> "$GITHUB_ENV"
+            fi
+          fi
 
       - name: Temporarily open SSH
         id: temp-ssh
@@ -445,7 +476,22 @@ jobs:
           fi
           conn="Host=${DB_HOST};Port=5432;Username=${DB_ADMIN_USERNAME};Password=${DB_ADMIN_PASSWORD};Database=postgres;SslMode=Require"
           printf '::add-mask::%s\n' "$conn"
-          printf '\nPOSTGRES_CONNECTION_STRING=%s\n' "$conn" >> app.env
+          printf '::add-mask::%s\n' "$DB_ADMIN_PASSWORD"
+          {
+            printf '\nPOSTGRES_CONNECTION_STRING=%s\n' "$conn"
+            printf 'POSTGRES_HOST=%s\n' "$DB_HOST"
+            printf 'POSTGRES_PORT=5432\n'
+            printf 'POSTGRES_NAME=postgres\n'
+            printf 'POSTGRES_USER=%s\n' "$DB_ADMIN_USERNAME"
+            printf 'POSTGRES_PASSWORD=%s\n' "$DB_ADMIN_PASSWORD"
+          } >> app.env
+          if [[ "${BLOB_STORAGE_ENABLED,,}" == "true" && -n "${BLOB_ACCOUNT_NAME:-}" ]]; then
+            printf '::add-mask::%s\n' "$BLOB_ACCOUNT_KEY"
+            {
+              printf 'AZURE_ACCOUNT_NAME=%s\n' "$BLOB_ACCOUNT_NAME"
+              printf 'AZURE_ACCOUNT_KEY=%s\n' "$BLOB_ACCOUNT_KEY"
+            } >> app.env
+          fi
 
       - name: Start SSH agent
         uses: webfactory/ssh-agent@v0.9.0
