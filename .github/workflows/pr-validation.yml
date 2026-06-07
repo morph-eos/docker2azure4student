@@ -1,0 +1,53 @@
+name: PR Validation                 # nome mostrato nei checks della PR
+
+on:
+  pull_request:                     # <-- il trigger: gira SOLO sulle PR, non sui push
+    branches: [ master ]            #     solo PR che puntano a master
+
+permissions:
+  id-token: write                   # serve se userai OIDC (issue #4); innocuo ora
+  contents: read
+  pull-requests: write              # per poter commentare il plan sulla PR (opzionale)
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform fmt
+        run: terraform fmt -check -recursive
+
+      - name: Terraform validate
+        run: |
+          terraform init -backend=false -input=false
+          terraform validate
+
+      - name: Azure login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Prepare tfvars + backend
+        run: |
+          echo "${{ secrets.TFVARS_B64 }}" | base64 -d > terraform.tfvars
+          if [[ -n "${{ secrets.TF_BACKEND_CONFIG }}" ]]; then
+            printf '%s\n' "${{ secrets.TF_BACKEND_CONFIG }}" > backend.hcl
+          fi
+
+      - name: Terraform plan
+        run: |
+          terraform init -input=false ${{ secrets.TF_BACKEND_CONFIG && '-backend-config=backend.hcl' || '' }}
+          terraform plan -input=false -no-color -out=tfplan | tee plan.txt
+
+      - name: Upload plan artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-plan
+          path: |
+            tfplan
+            plan.txt
+          retention-days: 5
