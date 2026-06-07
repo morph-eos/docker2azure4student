@@ -85,6 +85,14 @@ Terraform will provision every resource listed above. Use `terraform destroy` wh
 
 ## GitHub Actions integration (high level)
 
+### Branch, pull request, and documentation workflow
+
+This repository is treated as a fork/reference for the Locus platform. Prefer reading it and using it as infrastructure guidance; avoid modifying it unless the task explicitly requires infrastructure changes here.
+
+For explicit infrastructure work in this repo, committing and pushing directly to `main` is acceptable when the change is scoped and verified. Pull requests may still trigger repository checks, and the `sync/...` branches used by deployment automation are temporary delivery branches, not feature branches.
+
+Before any important infrastructure or architecture change, update the affected README or `.md` files. This includes Terraform variables, deployment flow, required secrets, rollback expectations, and operational runbooks.
+
 The workflow at `.github/workflows/deploy-from-sync.yml` expects a short-lived branch named `sync/...` that contains a `sync-bundle/` directory with your application artifacts and Dockerfile. During CI the workflow:
 
 1. Recreates `terraform.tfvars` from the `TFVARS_B64` secret and runs `terraform apply`.
