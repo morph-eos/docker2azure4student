@@ -1,0 +1,57 @@
+name: PR Validation
+
+on:
+  pull_request:
+    branches: [ master ]
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    env:                                          # 1) copio i secret in env: così posso testarli in 'if'
+      AZURE_CREDENTIALS: ${{ secrets.AZURE_CREDENTIALS }}
+      TFVARS_B64: ${{ secrets.TFVARS_B64 }}
+      TF_BACKEND_CONFIG: ${{ secrets.TF_BACKEND_CONFIG }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform fmt
+        run: terraform fmt -check -recursive
+
+      - name: Terraform validate
+        run: |
+          terraform init -backend=false -input=false
+          terraform validate -no-color | tee validate.txt
+
+      - name: Azure login
+        if: ${{ env.AZURE_CREDENTIALS != '' }}
+        uses: azure/login@v2
+        with:
+          creds: ${{ env.AZURE_CREDENTIALS }}
+
+      - name: Terraform plan
+        if: ${{ env.AZURE_CREDENTIALS != '' }}
+        run: |
+          echo "$TFVARS_B64" | base64 -d > terraform.tfvars
+          if [[ -n "$TF_BACKEND_CONFIG" ]]; then
+            printf '%s\n' "$TF_BACKEND_CONFIG" > backend.hcl
+            terraform init -input=false -reconfigure -backend-config=backend.hcl
+          else
+            terraform init -input=false -reconfigure
+          fi
+          terraform plan -input=false -no-color -out=tfplan | tee plan.txt
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-validation
+          path: |
+            validate.txt
+            plan.txt
+            tfplan
+          if-no-files-found: ignore
