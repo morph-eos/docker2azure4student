@@ -19,6 +19,7 @@ permissions:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    environment: production
     outputs:
       sync_branch: ${{ steps.sync-branch.outputs.value }}
       image_tag: ${{ steps.manifest.outputs.image_tag }}
@@ -86,10 +87,6 @@ jobs:
             fi
           }
 
-          if [[ -z "${{ secrets.AZURE_CREDENTIALS }}" ]]; then
-            echo "Missing secret: AZURE_CREDENTIALS" >&2
-            missing=1
-          fi
           append_var IMAGE_REGISTRY "${{ secrets.IMAGE_REGISTRY }}" IMAGE_REGISTRY
           append_var IMAGE_NAME "${{ secrets.IMAGE_NAME }}" IMAGE_NAME
           append_var REGISTRY_LOGIN_SERVER "${{ secrets.REGISTRY_LOGIN_SERVER }}" REGISTRY_LOGIN_SERVER
@@ -105,7 +102,9 @@ jobs:
       - name: Azure login
         uses: azure/login@v2
         with:
-          creds: ${{ secrets.AZURE_CREDENTIALS }}
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
       - name: Set up Terraform
         uses: hashicorp/setup-terraform@v3

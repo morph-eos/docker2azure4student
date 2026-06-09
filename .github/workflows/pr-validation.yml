@@ -11,8 +11,7 @@ permissions:
 jobs:
   validate:
     runs-on: ubuntu-latest
-    env:                                          # 1) copio i secret in env: così posso testarli in 'if'
-      AZURE_CREDENTIALS: ${{ secrets.AZURE_CREDENTIALS }}
+    env:
       TFVARS_B64: ${{ secrets.TFVARS_B64 }}
     steps:
       - uses: actions/checkout@v4
@@ -27,13 +26,15 @@ jobs:
           terraform validate -no-color | tee validate.txt
 
       - name: Azure login
-        if: ${{ env.AZURE_CREDENTIALS != '' }}
+        if: ${{ vars.AZURE_CLIENT_ID != '' }}
         uses: azure/login@v2
         with:
-          creds: ${{ env.AZURE_CREDENTIALS }}
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
       - name: Terraform plan
-        if: ${{ env.AZURE_CREDENTIALS != '' }}
+        if: ${{ vars.AZURE_CLIENT_ID != '' }}
         run: |
           set -euo pipefail
           echo "$TFVARS_B64" | base64 -d > terraform.tfvars
