@@ -14,7 +14,6 @@ jobs:
     env:                                          # 1) copio i secret in env: così posso testarli in 'if'
       AZURE_CREDENTIALS: ${{ secrets.AZURE_CREDENTIALS }}
       TFVARS_B64: ${{ secrets.TFVARS_B64 }}
-      TF_BACKEND_CONFIG: ${{ secrets.TF_BACKEND_CONFIG }}
     steps:
       - uses: actions/checkout@v4
       - uses: hashicorp/setup-terraform@v3
@@ -36,13 +35,25 @@ jobs:
       - name: Terraform plan
         if: ${{ env.AZURE_CREDENTIALS != '' }}
         run: |
+          set -euo pipefail
           echo "$TFVARS_B64" | base64 -d > terraform.tfvars
-          if [[ -n "$TF_BACKEND_CONFIG" ]]; then
-            printf '%s\n' "$TF_BACKEND_CONFIG" > backend.hcl
-            terraform init -input=false -reconfigure -backend-config=backend.hcl
-          else
-            terraform init -input=false -reconfigure
-          fi
+
+          read_tfvar() {
+            grep -E "^[[:space:]]*$1[[:space:]]*=" terraform.tfvars 2>/dev/null \
+              | head -1 | sed -E 's/.*=[[:space:]]*"?([^"#]+)"?.*/\1/' | tr -d '[:space:]'
+          }
+          # Stesso naming del deploy: il plan legge lo state remoto esistente.
+          ENV_NAME="$(read_tfvar environment_name)"; ENV_NAME="${ENV_NAME:-student-app}"
+          PREFIX="$(printf '%s' "$ENV_NAME" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9' | cut -c1-12)"
+          PREFIX="${PREFIX:-app}"
+          SUFFIX="$(az account show --query id -o tsv | sha256sum | cut -c1-8)"
+          SA="${PREFIX}tfst${SUFFIX}"
+
+          terraform init -input=false -reconfigure \
+            -backend-config=resource_group_name=tfstate-rg \
+            -backend-config=storage_account_name="$SA" \
+            -backend-config=container_name=tfstate \
+            -backend-config=key=docker2azure.tfstate
           terraform plan -input=false -no-color -out=tfplan | tee plan.txt
 
       - name: Upload artifacts

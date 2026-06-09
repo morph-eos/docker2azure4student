@@ -90,7 +90,6 @@ jobs:
             echo "Missing secret: AZURE_CREDENTIALS" >&2
             missing=1
           fi
-          append_var TF_BACKEND_CONFIG "${{ secrets.TF_BACKEND_CONFIG }}" TF_BACKEND_CONFIG false
           append_var IMAGE_REGISTRY "${{ secrets.IMAGE_REGISTRY }}" IMAGE_REGISTRY
           append_var IMAGE_NAME "${{ secrets.IMAGE_NAME }}" IMAGE_NAME
           append_var REGISTRY_LOGIN_SERVER "${{ secrets.REGISTRY_LOGIN_SERVER }}" REGISTRY_LOGIN_SERVER
@@ -111,20 +110,60 @@ jobs:
       - name: Set up Terraform
         uses: hashicorp/setup-terraform@v3
 
-      - name: Prepare backend config (optional)
+      - name: Ensure remote state backend
         id: backend
+        working-directory: ${{ env.TERRAFORM_WORKING_DIR }}
         run: |
-          if [[ -n "$TF_BACKEND_CONFIG" ]]; then
-            printf '%s\n' "$TF_BACKEND_CONFIG" > backend.hcl
-            echo "args=-backend-config=backend.hcl" >> "$GITHUB_OUTPUT"
-          else
-            echo "args=" >> "$GITHUB_OUTPUT"
+          set -euo pipefail
+
+          read_tfvar() {
+            grep -E "^[[:space:]]*$1[[:space:]]*=" terraform.tfvars 2>/dev/null \
+              | head -1 | sed -E 's/.*=[[:space:]]*"?([^"#]+)"?.*/\1/' | tr -d '[:space:]'
+          }
+
+          # Naming coerente con l'applicazione (vedi variables.tf / locals.tf)
+          RG="tfstate-rg"
+          CONTAINER="tfstate"
+          KEY="docker2azure.tfstate"
+
+          LOC="$(read_tfvar location)";              LOC="${LOC:-francecentral}"
+          ENV_NAME="$(read_tfvar environment_name)";  ENV_NAME="${ENV_NAME:-student-app}"
+
+          # Storage account: <prefix-app><suffix-deterministico>. Deve essere
+          # globalmente unico, solo minuscole/numeri, 3-24 caratteri.
+          PREFIX="$(printf '%s' "$ENV_NAME" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9' | cut -c1-12)"
+          PREFIX="${PREFIX:-app}"
+          SUB_ID="$(az account show --query id -o tsv)"
+          SUFFIX="$(printf '%s' "$SUB_ID" | sha256sum | cut -c1-8)"
+          SA="${PREFIX}tfst${SUFFIX}"
+
+          echo "State backend -> rg=$RG sa=$SA container=$CONTAINER key=$KEY loc=$LOC"
+
+          # create-if-not-exists: idempotente. Se mancano, li crea; se ci sono, li riusa.
+          az group show -n "$RG" >/dev/null 2>&1 || az group create -n "$RG" -l "$LOC" -o none
+
+          if ! az storage account show -n "$SA" -g "$RG" >/dev/null 2>&1; then
+            echo "Creating storage account $SA"
+            az storage account create -n "$SA" -g "$RG" -l "$LOC" \
+              --sku Standard_LRS --kind StorageV2 \
+              --min-tls-version TLS1_2 --allow-blob-public-access false -o none
+            # Versioning + soft delete: consentono il recupero dello state in caso di errore.
+            az storage account blob-service-properties update -n "$SA" -g "$RG" \
+              --enable-versioning true \
+              --enable-delete-retention true --delete-retention-days 7 -o none
           fi
+
+          ACCOUNT_KEY="$(az storage account keys list -n "$SA" -g "$RG" --query '[0].value' -o tsv)"
+          az storage container show -n "$CONTAINER" --account-name "$SA" --account-key "$ACCOUNT_KEY" >/dev/null 2>&1 \
+            || az storage container create -n "$CONTAINER" --account-name "$SA" --account-key "$ACCOUNT_KEY" -o none
+
+          # Config del backend passata a 'init' a runtime: niente backend.hcl, niente secret.
+          echo "args=-backend-config=resource_group_name=$RG -backend-config=storage_account_name=$SA -backend-config=container_name=$CONTAINER -backend-config=key=$KEY" >> "$GITHUB_OUTPUT"
 
       - name: Terraform init
         working-directory: ${{ env.TERRAFORM_WORKING_DIR }}
         run: |
-          terraform init -input=false ${{ steps.backend.outputs.args }}
+          terraform init -input=false -reconfigure ${{ steps.backend.outputs.args }}
 
       - name: Export Terraform vars for workflow
         id: tfvars-meta
