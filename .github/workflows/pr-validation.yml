@@ -47,7 +47,7 @@ jobs:
           ENV_NAME="$(read_tfvar environment_name)"; ENV_NAME="${ENV_NAME:-student-app}"
           PREFIX="$(printf '%s' "$ENV_NAME" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9' | cut -c1-12)"
           PREFIX="${PREFIX:-app}"
-          SUFFIX="$(az account show --query id -o tsv | sha256sum | cut -c1-8)"
+          SUFFIX="$(printf '%s' "$(az account show --query id -o tsv)" | sha256sum | cut -c1-8)"
           SA="${PREFIX}tfst${SUFFIX}"
 
           terraform init -input=false -reconfigure \
