@@ -68,40 +68,23 @@ Set the boolean flags to `false` when you do not need a capability; Terraform sk
 
 ## Prerequisites
 
-- Terraform >= 1.5 and the Azure CLI installed locally.
-- An Azure subscription. The pipeline uses OIDC federated credentials; for local runs an `az login` session is enough.
-- An SSH public key (ed25519 or RSA) that becomes the only authentication method for the VM.
-- Optional: Docker and `jq` if you want to reproduce the GitHub Actions workflow locally.
+You do **not** need Terraform or the Azure CLI installed to use this — the pipeline provisions the remote state, the infrastructure, and the application end to end. The only requirements are:
 
-## Configure variables
+- An Azure subscription with the deployment identity configured (OIDC federated credentials) and the repository's deployment variables/secrets set.
+- An SSH public key (ed25519 or RSA), which becomes the only authentication method for the VM.
 
-1. Copy the template and adjust the values:
+Everything else (state bootstrap, resource creation, secret distribution, container deploy) happens automatically on each run.
 
-   ```bash
-   cp terraform.tfvars.example terraform.tfvars
-   ```
+## Running it locally (optional)
 
-2. Edit `terraform.tfvars` and provide:
-   - `subscription_id` / `tenant_id` when not relying on the logged-in Azure CLI identity.
-   - `environment_name`, `location`, and your SSH public key (`admin_ssh_public_key`).
-   - Database credentials (`db_admin_username`, `db_admin_password`).
-   - Any CIDR ranges that should reach the VM via SSH/HTTP/HTTPS.
-
-3. When a pipeline needs to read a subset of values, use the helper script:
-
-   ```bash
-   python scripts/tfvars_meta.py terraform.tfvars subscription_id environment_name
-   ```
-
-   It prints `key=value` pairs and fails if any key is missing, which is handy inside GitHub Actions.
-
-## Deploy the stack
+The pipeline already does all of this; you only need the steps below if you want to drive Terraform yourself. They require Terraform >= 1.5 and an `az login` session.
 
 ```bash
-az login
-az account set --subscription <subscription-id>
+# 1) provide values
+cp terraform.tfvars.example terraform.tfvars   # then edit: environment_name, location,
+                                               # admin_ssh_public_key, db_admin_password, ...
 
-# Initialise against the shared remote state (see "Remote state" above)
+# 2) initialise against the shared remote state (see "Remote state" above) and apply
 terraform init \
   -backend-config=resource_group_name=tfstate-rg \
   -backend-config=storage_account_name=<the-account-name> \
@@ -111,8 +94,6 @@ terraform plan
 terraform apply
 ```
 
-Use `terraform destroy` when you no longer need the environment (export database data and Key Vault secrets beforehand).
-
 ## Outputs and what to do with them
 
 - `resource_group_name` – Scope Azure CLI commands after deployment.
@@ -121,12 +102,13 @@ Use `terraform destroy` when you no longer need the environment (export database
 - `storage_account_name` – Available only when `blob_storage_enabled = true`.
 - `key_vault_name` – The Key Vault that holds the application secrets.
 
-## Day-2 operations
+## Operations
 
-- **Snapshots** – Run the `*-snapshot` runbook from the Automation account, providing the resource group and VM name.
-- **Cleanup** – When enabled, the `*-snapshot-cleanup` runbook runs daily and deletes snapshots older than `vm_snapshot_retention_days`.
-- **Database backups** – Terraform configures platform backups (PITR) via `backup_retention_days`; the optional backup runbook adds an extra manual restore point.
-- **Firewall adjustments** – Update `allowed_admin_cidrs` and reapply. Switching to a static public IP also adds the matching database firewall rule.
+Almost everything is automatic or configuration-driven — there are no manual post-deploy steps:
+
+- **VM scheduling, snapshot cleanup, and PostgreSQL backups** run on their own once enabled via the automation toggles above.
+- **Changing the infrastructure** (firewall CIDRs, VM size, toggles, switching to a static public IP) means editing the Terraform variables; the next deploy reconciles everything, including the matching database firewall rule.
+- The only operator-initiated action is taking an **on-demand VM snapshot** via the `*-snapshot` runbook, when that toggle is enabled.
 
 ## GitHub Actions integration
 
