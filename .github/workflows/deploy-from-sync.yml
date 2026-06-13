@@ -94,7 +94,6 @@ jobs:
           append_var CONTAINER_REGISTRY_PASSWORD "${{ secrets.CONTAINER_REGISTRY_PASSWORD }}" CONTAINER_REGISTRY_PASSWORD
           append_var VM_SSH_USERNAME "${{ secrets.VM_SSH_USERNAME }}" VM_SSH_USERNAME
           append_var VM_SSH_KEY "${{ secrets.VM_SSH_KEY }}" VM_SSH_KEY
-          append_var APP_ENV_VARS_B64 "${{ secrets.APP_ENV_VARS_B64 }}" APP_ENV_VARS_B64
 
           if [[ $missing -ne 0 ]]; then
             exit 1
@@ -516,12 +515,12 @@ jobs:
           echo "image_uri=$IMAGE_URI" >> "$GITHUB_OUTPUT"
 
       - name: Decode application env file
+        working-directory: ${{ env.TERRAFORM_WORKING_DIR }}
         run: |
-          if [[ -z "$APP_ENV_VARS_B64" ]]; then
-            echo "APP_ENV_VARS_B64 secret is required" >&2
-            exit 1
-          fi
-          echo "$APP_ENV_VARS_B64" | base64 -d > app.env
+          set -euo pipefail
+          # The static base now lives in Key Vault (app-env-base), not in a GitHub secret.
+          KV="$(terraform output -raw key_vault_name)"
+          az keyvault secret show --vault-name "$KV" --name app-env-base --query value -o tsv | base64 -d > app.env
 
       - name: Append database connection string
         env:
@@ -556,13 +555,6 @@ jobs:
         run: |
           set -euo pipefail
           KV="$(terraform output -raw key_vault_name)"
-          # Seed the static base once, so APP_ENV_VARS_B64 can be retired later.
-          if ! az keyvault secret show --vault-name "$KV" --name app-env-base >/dev/null 2>&1; then
-            printf '%s' "$APP_ENV_VARS_B64" > app-env-base.b64
-            az keyvault secret set --vault-name "$KV" --name app-env-base --file app-env-base.b64 -o none
-            rm -f app-env-base.b64
-            echo "Seeded app-env-base in Key Vault"
-          fi
           # Publish the full assembled env (base64) for the VM to read at runtime.
           base64 -w0 app.env > app-env.b64
           az keyvault secret set --vault-name "$KV" --name app-env --file app-env.b64 -o none
@@ -611,10 +603,7 @@ jobs:
             sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
           EOF
 
-      - name: Copy env file to VM
-        run: scp -o StrictHostKeyChecking=no app.env ${{ env.VM_SSH_USERNAME }}@${{ steps.tf-outputs.outputs.vm_ip }}:/home/${{ env.VM_SSH_USERNAME }}/app.env
-
-      - name: Load env on VM from Key Vault (fallback to scp'd file)
+      - name: Load env on VM from Key Vault
         working-directory: ${{ env.TERRAFORM_WORKING_DIR }}
         env:
           VM_IP: ${{ steps.tf-outputs.outputs.vm_ip }}
@@ -624,17 +613,20 @@ jobs:
           APP_USER='${{ env.VM_SSH_USERNAME }}'
           ssh -o StrictHostKeyChecking=no "$APP_USER@${VM_IP}" "KV_HOST='$KV_HOST' APP_USER='$APP_USER' bash -s" <<'EOF'
             set -uo pipefail
+            ENV_FILE="/home/$APP_USER/app.env"
             TOKEN=$(curl -s -H 'Metadata: true' "http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01&resource=https://vault.azure.net" | python3 -c 'import sys,json;print(json.load(sys.stdin)["access_token"])' 2>/dev/null || true)
+            VAL=""
             if [ -n "$TOKEN" ]; then
               VAL=$(curl -s -H "Authorization: Bearer $TOKEN" "https://$KV_HOST/secrets/app-env?api-version=7.4" | python3 -c 'import sys,json;print(json.load(sys.stdin).get("value",""))' 2>/dev/null || true)
-              if [ -n "$VAL" ]; then
-                echo "$VAL" | base64 -d > "/home/$APP_USER/app.env"
-                echo "app.env loaded from Key Vault via managed identity"
-              else
-                echo "Key Vault returned empty/denied; keeping scp'd app.env" >&2
-              fi
+            fi
+            if [ -n "$VAL" ]; then
+              echo "$VAL" | base64 -d > "$ENV_FILE"
+              echo "app.env loaded from Key Vault via managed identity"
+            elif [ -f "$ENV_FILE" ]; then
+              echo "Key Vault read failed; reusing existing app.env from previous deploy" >&2
             else
-              echo "No managed-identity token; keeping scp'd app.env" >&2
+              echo "Key Vault read failed and no existing app.env on the VM" >&2
+              exit 1
             fi
           EOF
 
