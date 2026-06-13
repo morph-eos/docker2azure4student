@@ -28,3 +28,8 @@ variable "pipeline_principal_id" {
   description = "Object ID of the principal running the pipeline (granted write access to secrets)."
   type        = string
 }
+
+variable "vm_principal_id" {
+  description = "Object ID of the VM managed identity (granted read access to secrets)."
+  type        = string
+}

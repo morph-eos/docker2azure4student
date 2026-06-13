@@ -88,6 +88,7 @@ module "keyvault" {
   tenant_id             = data.azurerm_client_config.current.tenant_id
   tags                  = var.tags
   pipeline_principal_id = data.azurerm_client_config.current.object_id
+  vm_principal_id       = module.compute.vm_principal_id
 }
 
 # First secret stored in Key Vault (Phase 1). The app still reads its config

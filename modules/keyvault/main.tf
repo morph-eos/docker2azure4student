@@ -21,6 +21,10 @@ resource "azurerm_key_vault_access_policy" "pipeline" {
   secret_permissions = ["Get", "List", "Set", "Delete", "Recover"]
 }
 
-# NOTE: the VM read access policy is added in a later phase, once the VM's
-# system-assigned identity (added in this same change) already exists in state
-# and its principal_id is known. Adding it here would be null at plan time.
+resource "azurerm_key_vault_access_policy" "vm" {
+  key_vault_id = azurerm_key_vault.main.id
+  tenant_id    = var.tenant_id
+  object_id    = var.vm_principal_id
+
+  secret_permissions = ["Get", "List"]
+}
