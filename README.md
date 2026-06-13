@@ -1,31 +1,49 @@
 # Terraform blueprint for the student-friendly Azure stack
 
-This repository contains the Terraform code that stands up a small Azure footprint tailored for Azure for Students subscriptions: one Linux VM that runs your containerized workload and a managed PostgreSQL Flexible Server, surrounded by automation to keep costs predictable and provide self-service backups.
+This repository contains modular Terraform that stands up a small Azure footprint tailored for Azure for Students subscriptions: one Linux VM that runs your containerized workload and a managed PostgreSQL Flexible Server, with an Azure Key Vault for application secrets and automation to keep costs predictable. The accompanying GitHub Actions pipeline deploys it **secretlessly** (Azure login via OpenID Connect, no long-lived credentials) and the VM reads its runtime configuration from Key Vault using its own managed identity.
 
 ## Architecture overview
 
-Resources are deployed inside a single resource group whose name is derived from `environment_name` (normalized and truncated to 45 characters):
+Everything lives in a single resource group whose name is derived from `environment_name` (normalized and truncated to 45 characters). The Terraform is split into reusable modules under [`modules/`](modules/):
 
-- **Networking** – A /16 virtual network with one subnet dedicated to the VM. The NSG keeps HTTP/HTTPS open and limits SSH to the CIDR list declared in `allowed_admin_cidrs`.
-- **Compute** – An Ubuntu 22.04 LTS VM (`azurerm_linux_virtual_machine.app`) with a 64 GB Premium SSD OS disk. Only SSH keys are accepted; password auth stays disabled.
-- **Public ingress** – A basic SKU public IP (dynamic by default, switchable to static) and a NIC wired to the VM subnet.
-- **Automation** – An Azure Automation account is created only when at least one automation feature is enabled. Runbooks handle VM start/stop schedules, ad-hoc snapshots, snapshot cleanup, and PostgreSQL manual backups.
-- **Database** – Azure Database for PostgreSQL Flexible Server using the Basic B1ms SKU. Storage is set to 32 GB and `db_auto_grow_enabled = false` by default to stay within the free tier. Terraform also creates the default database (`postgres`) plus firewall rules for Azure services and (optionally) the VM public IP.
-- **Blob storage** – An Azure Storage Account (Standard LRS, TLS 1.2 only) is created only when `blob_storage_enabled = true`. Public blob access is disabled by default. The account name and primary key are exposed as outputs and added to the application environment as `AZURE_ACCOUNT_NAME` and `AZURE_ACCOUNT_KEY`.
-- **Convenience outputs** – SSH command, VM IP, PostgreSQL connection strings, and (when enabled) the storage account name are exported so application teams do not need to hunt for them in the portal.
+| Module | Resources |
+| --- | --- |
+| **network** | /16 virtual network with one VM subnet, NSG (HTTP/HTTPS open, SSH limited to `allowed_admin_cidrs`), public IP (dynamic by default, switchable to static), NIC. |
+| **compute** | Ubuntu 22.04 LTS VM with a 64 GB Premium SSD OS disk, SSH-key auth only, and a **system-assigned managed identity**. |
+| **database** | PostgreSQL Flexible Server (Basic B1ms, 32 GB, auto-grow off by default to stay in the free tier), the default `postgres` database, and firewall rules for Azure services and (optionally) the VM public IP. |
+| **storage** | Optional Azure Storage Account for blobs (`blob_storage_enabled`), Standard LRS, TLS 1.2 only, public access disabled, with **blob versioning and 7-day soft delete** for recoverability. |
+| **automation** | Azure Automation account + runbooks, created only when at least one automation feature is enabled (VM start/stop schedules, ad-hoc snapshots, snapshot cleanup, on-demand PostgreSQL backups). |
+| **keyvault** | Azure Key Vault holding the application secrets (see *Secret management* below), with access policies for the pipeline (read/write) and the VM identity (read). |
+
+The root module wires the modules together, owns the resource group, and exposes connection details (SSH command, VM IP, database FQDN/connection string, storage account name) as outputs.
+
+## Authentication (secretless / OIDC)
+
+The pipeline authenticates to Azure through **workload identity federation (OpenID Connect)** — there is no Service Principal secret stored anywhere:
+
+- `azure/login` exchanges a short-lived GitHub OIDC token for an Azure access token, using the `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, and `AZURE_SUBSCRIPTION_ID` **repository variables** (these are identifiers, not secrets).
+- The deployment job runs in the `production` GitHub environment, so the OIDC token's subject matches a **federated credential** registered on the Azure app registration.
+
+## Secret management (Key Vault)
+
+Application secrets live in Azure Key Vault rather than in the application repository:
+
+- The pipeline assembles the full application environment (static base + the live database connection and, when enabled, the storage account credentials) and publishes it to Key Vault as the `app-env` secret. The static base is seeded once from `APP_ENV_VARS_B64` and thereafter stored as `app-env-base`.
+- The database connection string and the storage account name/key are also stored as individual Key Vault secrets.
+- At deploy time the **VM fetches `app-env` from Key Vault using its managed identity** (via the instance metadata service) and writes `app.env`; the container then starts with `--env-file`. No application secret is copied over SSH.
 
 ## Remote state
 
 Terraform state is stored remotely in Azure Storage so that it survives ephemeral CI runners, is shared across machines, and is protected against concurrent writes (the `azurerm` backend takes a blob lease, which stops two `terraform apply` runs from corrupting the state at the same time).
 
-The backend is **bootstrapped automatically by the pipeline** — there is no manual setup and no extra file or secret to maintain:
+The backend is **bootstrapped automatically by the pipeline** — no manual setup, no extra file or secret:
 
 - `versions.tf` declares an empty `backend "azurerm" {}`; the concrete settings are injected at `init` time via `-backend-config`.
-- On every run the workflow ensures the backing resources exist (create-if-missing, fully idempotent):
+- On every run the workflow ensures the backing resources exist (create-if-missing, idempotent):
   - **Resource group** `tfstate-rg`
-  - **Storage account** named `<environment_name><suffix>`, where the suffix is derived deterministically from the subscription ID (the name stays globally unique yet stable across runs)
-  - **Container** `tfstate`, with the state stored under the key `docker2azure.tfstate`
-- The storage account is created with **blob versioning** and **soft delete** (7 days) enabled, so a bad apply can be recovered.
+  - **Storage account** named `<environment_name><suffix>`, where the suffix is derived deterministically from the subscription ID (globally unique yet stable across runs)
+  - **Container** `tfstate`, state stored under the key `docker2azure.tfstate`
+- The state storage account has **blob versioning** and **soft delete** (7 days) enabled, so a bad apply can be recovered.
 
 To work against the same remote state locally, initialise with the matching backend settings:
 
@@ -41,36 +59,35 @@ terraform init \
 
 | Feature | Variables | What it does |
 | --- | --- | --- |
-| VM daily schedule | `vm_schedule_enabled`, `vm_schedule_start_time`, `vm_schedule_stop_time`, `vm_schedule_timezone` | Creates Automation runbooks + schedules that start and stop the VM every day to save credits. |
-| Manual VM snapshot | `vm_snapshot_runbook_enabled` | Deploys the `*-snapshot` runbook so you can trigger OS disk snapshots on demand without a Recovery Services vault. |
-| Snapshot cleanup | `vm_snapshot_cleanup_enabled`, `vm_snapshot_retention_days`, `vm_snapshot_cleanup_time`, `vm_snapshot_cleanup_timezone` | Schedules a cleanup runbook that deletes snapshots older than your retention window. |
-| PostgreSQL on-demand backup | `db_backup_enabled`, `db_backup_time`, `db_backup_timezone` | Adds a runbook + schedule that calls the Flexible Server REST API to create an extra backup once per day. |
+| VM daily schedule | `vm_schedule_enabled`, `vm_schedule_start_time`, `vm_schedule_stop_time`, `vm_schedule_timezone` | Automation runbooks + schedules that start/stop the VM daily to save credits. |
+| Manual VM snapshot | `vm_snapshot_runbook_enabled` | Deploys the `*-snapshot` runbook for on-demand OS-disk snapshots. |
+| Snapshot cleanup | `vm_snapshot_cleanup_enabled`, `vm_snapshot_retention_days`, `vm_snapshot_cleanup_time`, `vm_snapshot_cleanup_timezone` | Scheduled runbook that deletes snapshots older than the retention window. |
+| PostgreSQL on-demand backup | `db_backup_enabled`, `db_backup_time`, `db_backup_timezone` | Runbook + schedule that calls the Flexible Server REST API for an extra daily backup. |
 
-Set the boolean flags to `false` when you do not need a capability; Terraform will skip the related Automation modules, runbooks, schedules, and job bindings.
+Set the boolean flags to `false` when you do not need a capability; Terraform skips the related Automation modules, runbooks, schedules, and job bindings.
 
 ## Prerequisites
 
 - Terraform >= 1.5 and the Azure CLI installed locally.
-- An Azure subscription where you can create a service principal or use your CLI session (`az login`).
-- An SSH public key (ed25519 or RSA) that will become the only authentication method for the VM.
-- Optional: Docker and jq if you want to reproduce the GitHub Actions workflow locally.
+- An Azure subscription. The pipeline uses OIDC federated credentials; for local runs an `az login` session is enough.
+- An SSH public key (ed25519 or RSA) that becomes the only authentication method for the VM.
+- Optional: Docker and `jq` if you want to reproduce the GitHub Actions workflow locally.
 
 ## Configure variables
 
 1. Copy the template and adjust the values:
 
    ```bash
-   cd /home/morph-eos/Codice/docker2azure4student
    cp terraform.tfvars.example terraform.tfvars
    ```
 
 2. Edit `terraform.tfvars` and provide:
-   - `subscription_id` / `tenant_id` when you are not relying on the logged-in Azure CLI identity.
+   - `subscription_id` / `tenant_id` when not relying on the logged-in Azure CLI identity.
    - `environment_name`, `location`, and your SSH public key (`admin_ssh_public_key`).
    - Database credentials (`db_admin_username`, `db_admin_password`).
    - Any CIDR ranges that should reach the VM via SSH/HTTP/HTTPS.
 
-3. Whenever a pipeline needs to read a subset of values (subscription ID, environment name, etc.), run the helper script:
+3. When a pipeline needs to read a subset of values, use the helper script:
 
    ```bash
    python scripts/tfvars_meta.py terraform.tfvars subscription_id environment_name
@@ -94,71 +111,70 @@ terraform plan
 terraform apply
 ```
 
-Terraform will provision every resource listed above. Use `terraform destroy` when you no longer need the environment (remember to export database data beforehand).
+Use `terraform destroy` when you no longer need the environment (export database data and Key Vault secrets beforehand).
 
 ## Outputs and what to do with them
 
-- `resource_group_name` – Use it to scope Azure CLI commands after deployment.
-- `vm_public_ip` / `ssh_connection_string` – Connect to the VM and install runtime dependencies (Docker, certbot, etc.).
-- `database_fqdn` / `database_connection_string` – Configure your application or connection pools. The connection string uses TLS (`sslmode=require`).
-- `storage_account_name` / `storage_account_key` – Available only when `blob_storage_enabled = true`. The CI workflow automatically injects these as `AZURE_ACCOUNT_NAME` and `AZURE_ACCOUNT_KEY` into the application `.env` file.
+- `resource_group_name` – Scope Azure CLI commands after deployment.
+- `vm_public_ip` / `ssh_connection_string` – Connect to the VM.
+- `database_fqdn` / `database_connection_string` – Configure your application. The connection string uses TLS (`sslmode=require`).
+- `storage_account_name` – Available only when `blob_storage_enabled = true`.
+- `key_vault_name` – The Key Vault that holds the application secrets.
 
 ## Day-2 operations
 
-- **First login** – SSH into the VM, install Docker, and add your user to the `docker` group. The GitHub workflow can perform these steps automatically, but doing it once manually is useful during bring-up.
-- **Snapshots** – Open the Automation account, run the `*-snapshot` runbook, and provide the resource group plus VM name. Names are prefixed with `manual-<timestamp>` by default.
-- **Cleanup** – When enabled, the `*-snapshot-cleanup` runbook runs daily and deletes snapshots older than `vm_snapshot_retention_days`. You can run it manually as well.
-- **Database backups** – Terraform configures platform backups (PITR) through `backup_retention_days`. Enabling the custom backup runbook gives you an extra manual restore point without touching the portal.
-- **Firewall adjustments** – Update `allowed_admin_cidrs` and reapply Terraform whenever admins rotate networks. If you switch to a static public IP, Terraform will automatically add the database firewall rule that matches it.
+- **Snapshots** – Run the `*-snapshot` runbook from the Automation account, providing the resource group and VM name.
+- **Cleanup** – When enabled, the `*-snapshot-cleanup` runbook runs daily and deletes snapshots older than `vm_snapshot_retention_days`.
+- **Database backups** – Terraform configures platform backups (PITR) via `backup_retention_days`; the optional backup runbook adds an extra manual restore point.
+- **Firewall adjustments** – Update `allowed_admin_cidrs` and reapply. Switching to a static public IP also adds the matching database firewall rule.
 
-## GitHub Actions integration (high level)
+## GitHub Actions integration
 
-### Branch, pull request, and documentation workflow
-
-This repository is treated as a fork/reference for the Locus platform. Prefer reading it and using it as infrastructure guidance; avoid modifying it unless the task explicitly requires infrastructure changes here.
-
-For explicit infrastructure work in this repo, committing and pushing directly to `main` is acceptable when the change is scoped and verified. Pull requests may still trigger repository checks, and the `sync/...` branches used by deployment automation are temporary delivery branches, not feature branches.
-
-Before any important infrastructure or architecture change, update the affected README or `.md` files. This includes Terraform variables, deployment flow, required secrets, rollback expectations, and operational runbooks.
+The `sync/...` branches used by deployment automation are temporary delivery branches, not feature branches. Before any important infrastructure change, update the affected README or `.md` files (Terraform variables, deployment flow, required secrets, operational runbooks).
 
 ### Pull request validation
 
-Every pull request targeting `main` runs `.github/workflows/pr-validation.yml`, which gives fast feedback before code is merged:
+Every pull request targeting `main` runs [`.github/workflows/pr-validation.yml`](.github/workflows/pr-validation.yml):
 
 1. `terraform fmt -check` and `terraform validate` always run (no cloud credentials required).
-2. When Azure credentials are available, it also runs `terraform plan` against the live remote state.
+2. When Azure access is configured, it also runs `terraform plan` against the live remote state.
 3. The validation output (and the plan, when produced) is published as a build artifact.
 
-When branch protection is enabled on `main`, merging requires the validation check to pass, at least one approving review, and signed commits, while force-pushes are disabled.
+### Security scanning
+
+[`.github/workflows/security-scan.yml`](.github/workflows/security-scan.yml) runs Trivy on every push and pull request:
+
+- **IaC misconfiguration scan** of the Terraform (fails the job on `CRITICAL`/`HIGH` findings; an accepted baseline is documented in [`.trivyignore`](.trivyignore)).
+- **Secret scan** of the working tree.
+- Results are also uploaded as SARIF to the GitHub *Security* tab where Advanced Security is available.
 
 ### Continuous deployment
 
-The workflow at `.github/workflows/deploy-from-sync.yml` expects a short-lived branch named `sync/...` that contains a `sync-bundle/` directory with your application artifacts and Dockerfile. During CI the workflow:
+[`.github/workflows/deploy-from-sync.yml`](.github/workflows/deploy-from-sync.yml) runs on a short-lived `sync/...` branch that carries a `sync-bundle/` directory with the application artifacts and Dockerfile. The job:
 
-1. Recreates `terraform.tfvars` from the `TFVARS_B64` secret.
-2. Ensures the remote state backend exists — the resource group, storage account, and container are created on the first run and reused afterwards, with no backend file or secret to manage — then runs `terraform apply`.
-3. Builds and pushes a container image using the bundle provided by the private application repository.
-4. Copies the `.env` file derived from `APP_ENV_VARS_B64` to the VM, then redeploys the container via Docker over SSH.
-5. Always deletes the temporary NSG rule and the `sync/...` branch when it finishes.
+1. Logs in to Azure via **OIDC** and ensures the remote state backend exists.
+2. On a brand-new environment, adopts any pre-existing Azure resources into state; on a populated state this step is skipped.
+3. Runs `terraform plan -out=tfplan`, publishes the plan as an artifact, and applies **exactly that plan**.
+4. Builds and pushes the container image, publishes the assembled `app-env` to Key Vault, and has the VM load it via its managed identity.
+5. Redeploys the container over SSH and always deletes the temporary NSG rule and the `sync/...` branch when it finishes.
 
-Refer to `AUTOMATION.md` for the full automation playbook, including every required secret and how the two repositories (private app vs public infra) coordinate.
-
-> **Tip:** Clone this repository into your own private workspace (or fork it privately) before wiring up secrets. That way you keep infrastructure code readable for collaborators while preventing strangers from inspecting your workflow runs or deployment metadata.
+Refer to `AUTOMATION.md` for the full automation playbook, including required secrets/variables and how the application and infrastructure repositories coordinate.
 
 ## Repository layout
 
 ```text
 .
-├── main.tf                # Azure resources (RG, VNet, VM, Automation, PostgreSQL, Storage)
+├── main.tf                # Root module: resource group + module wiring + Key Vault secrets
 ├── variables.tf           # Input variables with defaults and docs
-├── locals.tf              # Naming helpers + schedule timestamps
+├── locals.tf              # Naming helpers
 ├── outputs.tf             # Connection details for operators and CI
+├── moved.tf               # State moves for the monolith -> modules refactor
 ├── providers.tf / versions.tf  # Providers + remote azurerm backend declaration
-├── .github/workflows/     # pr-validation.yml (CI) and deploy-from-sync.yml (CD)
+├── modules/               # network, compute, database, automation, storage, keyvault
+├── .github/workflows/     # pr-validation.yml, security-scan.yml, deploy-from-sync.yml
 ├── scripts/tfvars_meta.py # Utility used by CI to read tfvars metadata
+├── .trivyignore           # Accepted security-scan baseline
 ├── terraform.tfvars.example
 ├── README.md
 └── AUTOMATION.md
 ```
-
-Use this repo as the public-facing IaC source while keeping your application code private; the GitHub workflow handles the hand-off between the two worlds.
