@@ -19,7 +19,7 @@ jobs:
       # 1) Produce a SARIF report. This step never fails (exit-code 0); the
       #    policy gate is enforced separately below so it works on every plan.
       - name: Trivy IaC scan (SARIF report)
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: config
           scan-ref: .
@@ -41,7 +41,7 @@ jobs:
 
       # 2) THE GATE - fails the job on CRITICAL/HIGH IaC misconfig. Plan-agnostic.
       - name: Trivy IaC gate (fail on findings)
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: config
           scan-ref: .
@@ -51,7 +51,7 @@ jobs:
 
       # 3) Secret scan - fails the job if a hardcoded secret is committed.
       - name: Trivy secret scan (fail on findings)
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: fs
           scan-ref: .
