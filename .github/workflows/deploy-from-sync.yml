@@ -94,6 +94,7 @@ jobs:
           append_var CONTAINER_REGISTRY_PASSWORD "${{ secrets.CONTAINER_REGISTRY_PASSWORD }}" CONTAINER_REGISTRY_PASSWORD
           append_var VM_SSH_USERNAME "${{ secrets.VM_SSH_USERNAME }}" VM_SSH_USERNAME
           append_var VM_SSH_KEY "${{ secrets.VM_SSH_KEY }}" VM_SSH_KEY
+          append_var APP_ENV_VARS_B64 "${{ secrets.APP_ENV_VARS_B64 }}" APP_ENV_VARS_B64 false
 
           if [[ $missing -ne 0 ]]; then
             exit 1
@@ -518,9 +519,23 @@ jobs:
         working-directory: ${{ env.TERRAFORM_WORKING_DIR }}
         run: |
           set -euo pipefail
-          # The static base now lives in Key Vault (app-env-base), not in a GitHub secret.
           KV="$(terraform output -raw key_vault_name)"
-          az keyvault secret show --vault-name "$KV" --name app-env-base --query value -o tsv | base64 -d > app.env
+          if az keyvault secret show --vault-name "$KV" --name app-env-base >/dev/null 2>&1; then
+            # Steady state: the static base lives in Key Vault.
+            az keyvault secret show --vault-name "$KV" --name app-env-base --query value -o tsv | base64 -d > app.env
+          else
+            # First run for a fresh environment: seed app-env-base from the
+            # APP_ENV_VARS_B64 bootstrap secret; afterwards Key Vault is the source.
+            if [[ -z "${APP_ENV_VARS_B64:-}" ]]; then
+              echo "app-env-base not in Key Vault and APP_ENV_VARS_B64 not set" >&2
+              exit 1
+            fi
+            printf '%s' "$APP_ENV_VARS_B64" > app-env-base.b64
+            az keyvault secret set --vault-name "$KV" --name app-env-base --file app-env-base.b64 -o none
+            rm -f app-env-base.b64
+            printf '%s' "$APP_ENV_VARS_B64" | base64 -d > app.env
+            echo "Seeded app-env-base in Key Vault from APP_ENV_VARS_B64 (first run)"
+          fi
 
       - name: Append database connection string
         env:
