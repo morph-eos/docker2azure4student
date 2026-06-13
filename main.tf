@@ -101,3 +101,23 @@ resource "azurerm_key_vault_secret" "db_connection_string" {
 
   depends_on = [module.keyvault]
 }
+
+# Storage account credentials in Key Vault (parity with the DB), created only
+# when blob storage is enabled. The app receives them via app-env too.
+resource "azurerm_key_vault_secret" "storage_account_name" {
+  count        = var.blob_storage_enabled ? 1 : 0
+  name         = "storage-account-name"
+  value        = module.storage.account_name
+  key_vault_id = module.keyvault.key_vault_id
+
+  depends_on = [module.keyvault]
+}
+
+resource "azurerm_key_vault_secret" "storage_account_key" {
+  count        = var.blob_storage_enabled ? 1 : 0
+  name         = "storage-account-key"
+  value        = module.storage.primary_access_key
+  key_vault_id = module.keyvault.key_vault_id
+
+  depends_on = [module.keyvault]
+}
