@@ -3,6 +3,12 @@ resource "random_string" "blob_suffix" {
   length  = 6
   special = false
   upper   = false
+
+  # Importing a random_string resets special/upper to schema defaults (true),
+  # which would otherwise force a replacement and rename the storage account.
+  lifecycle {
+    ignore_changes = [special, upper]
+  }
 }
 
 resource "azurerm_storage_account" "blob" {

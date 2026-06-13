@@ -9,6 +9,6 @@ output "vm_name" {
 }
 
 output "vm_principal_id" {
-  description = "Principal ID of the VM system-assigned managed identity."
-  value       = azurerm_linux_virtual_machine.app.identity[0].principal_id
+  description = "Principal ID of the VM system-assigned managed identity (null if none yet)."
+  value       = one(azurerm_linux_virtual_machine.app.identity[*].principal_id)
 }
