@@ -1,0 +1,18 @@
+# Accepted security risks (documented baseline). The gate still fails on any
+# NEW finding; these specific ones are intentional for this project. Real
+# hardening is tracked in issue #2 (infrastructure hardening).
+
+# Public web application: HTTP/HTTPS must be reachable from the internet.
+AZU-0047
+AVD-AZU-0047
+
+# The VM needs outbound internet access (pull container images & OS updates,
+# reach Key Vault / the container registry).
+AZU-0051
+AVD-AZU-0051
+
+# Key Vault is protected by Entra ID auth + access policies. A default-deny
+# network ACL would break CI (dynamic GitHub runner IPs) and the VM read path.
+# Candidate for hardening (service endpoints / trusted services) in issue #2.
+AZU-0013
+AVD-AZU-0013

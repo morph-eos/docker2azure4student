@@ -40,7 +40,9 @@ jobs:
           sarif_file: trivy-iac.sarif
 
       # 2) THE GATE - fails the job on CRITICAL/HIGH IaC misconfig. Plan-agnostic.
+      #    Accepted baseline findings live in .trivyignore.
       - name: Trivy IaC gate (fail on findings)
+        if: always()
         uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: config
@@ -48,9 +50,12 @@ jobs:
           format: table
           severity: CRITICAL,HIGH
           exit-code: '1'
+          trivyignores: .trivyignore
 
       # 3) Secret scan - fails the job if a hardcoded secret is committed.
+      #    Runs independently so it reports even when the IaC gate fails.
       - name: Trivy secret scan (fail on findings)
+        if: always()
         uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: fs
