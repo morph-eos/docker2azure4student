@@ -79,3 +79,25 @@ module "storage" {
   tags                 = var.tags
   blob_storage_enabled = var.blob_storage_enabled
 }
+
+module "keyvault" {
+  source                = "./modules/keyvault"
+  name_prefix           = local.prefix
+  location              = var.location
+  resource_group_name   = azurerm_resource_group.main.name
+  tenant_id             = data.azurerm_client_config.current.tenant_id
+  tags                  = var.tags
+  pipeline_principal_id = data.azurerm_client_config.current.object_id
+  vm_principal_id       = module.compute.vm_principal_id
+}
+
+# First secret stored in Key Vault (Phase 1). The app still reads its config
+# from the GitHub-secret-driven app.env for now; the VM-managed-identity read
+# path is a later, verified phase.
+resource "azurerm_key_vault_secret" "db_connection_string" {
+  name         = "database-connection-string"
+  value        = "postgresql://${var.db_admin_username}:${var.db_admin_password}@${module.database.fqdn}:5432/${module.database.database_name}?sslmode=require"
+  key_vault_id = module.keyvault.key_vault_id
+
+  depends_on = [module.keyvault]
+}

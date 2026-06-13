@@ -7,6 +7,10 @@ resource "azurerm_linux_virtual_machine" "app" {
   disable_password_authentication = true
   network_interface_ids           = [var.network_interface_id]
 
+  identity {
+    type = "SystemAssigned"
+  }
+
   admin_ssh_key {
     username   = var.vm_admin_username
     public_key = var.admin_ssh_public_key

@@ -29,6 +29,11 @@ output "storage_account_name" {
   value       = module.storage.account_name
 }
 
+output "key_vault_name" {
+  description = "Name of the Key Vault holding application secrets."
+  value       = module.keyvault.key_vault_name
+}
+
 output "storage_account_key" {
   description = "Primary access key for the Azure Storage Account (null when blob_storage_enabled = false)."
   sensitive   = true
