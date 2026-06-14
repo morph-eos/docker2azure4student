@@ -10,6 +10,12 @@ variable "tenant_id" {
   default     = null
 }
 
+variable "log_max_total_gb" {
+  description = "Soft cap on total Log Analytics size in GB (enforced as a daily ingestion quota). Set to -1 to disable the cap."
+  type        = number
+  default     = 3
+}
+
 variable "location" {
   description = "Azure region for every resource."
   type        = string

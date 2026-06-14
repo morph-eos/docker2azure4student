@@ -25,6 +25,12 @@ variable "retention_days" {
   default     = 30
 }
 
+variable "max_total_gb" {
+  description = "Soft cap on total log size in GB, enforced as a daily ingestion quota (max_total_gb / retention_days). Set to -1 to disable the cap."
+  type        = number
+  default     = 3
+}
+
 variable "postgres_id" {
   description = "Resource ID of the PostgreSQL server to route diagnostics from."
   type        = string
