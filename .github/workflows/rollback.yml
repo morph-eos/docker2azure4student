@@ -258,11 +258,18 @@ jobs:
             exit 1
           fi
 
-      - name: Checkout known-good ref
+      - name: Checkout
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.git_ref }}
           fetch-depth: 0
+
+      - name: Check out known-good ref
+        run: |
+          set -euo pipefail
+          # Resolve branch, tag, full or short SHA (actions/checkout's `ref` does
+          # not accept a short SHA, so we resolve it here against full history).
+          git checkout "${{ inputs.git_ref }}"
+          echo "Rolling infra back to $(git rev-parse --short HEAD): $(git log -1 --pretty=%s)"
 
       - name: Restore terraform.tfvars from secret
         run: |
