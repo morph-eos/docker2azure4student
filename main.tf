@@ -121,3 +121,21 @@ resource "azurerm_key_vault_secret" "storage_account_key" {
 
   depends_on = [module.keyvault]
 }
+
+module "monitoring" {
+  source              = "./modules/monitoring"
+  name_prefix         = local.prefix
+  location            = var.location
+  resource_group_name = azurerm_resource_group.main.name
+  tags                = var.tags
+  postgres_id         = module.database.server_id
+  key_vault_id        = module.keyvault.key_vault_id
+}
+
+resource "azurerm_key_vault_secret" "appinsights_connection_string" {
+  name         = "appinsights-connection-string"
+  value        = module.monitoring.connection_string
+  key_vault_id = module.keyvault.key_vault_id
+
+  depends_on = [module.keyvault]
+}

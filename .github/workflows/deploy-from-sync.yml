@@ -564,6 +564,11 @@ jobs:
               printf 'AZURE_ACCOUNT_KEY=%s\n' "$BLOB_ACCOUNT_KEY"
             } >> app.env
           fi
+          appi="$(terraform output -raw app_insights_connection_string 2>/dev/null || true)"
+          if [[ -n "$appi" ]]; then
+            printf '::add-mask::%s\n' "$appi"
+            printf 'APPLICATIONINSIGHTS_CONNECTION_STRING=%s\n' "$appi" >> app.env
+          fi
 
       - name: Publish app env to Key Vault
         working-directory: ${{ env.TERRAFORM_WORKING_DIR }}

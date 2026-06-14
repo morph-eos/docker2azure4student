@@ -34,6 +34,12 @@ output "key_vault_name" {
   value       = module.keyvault.key_vault_name
 }
 
+output "app_insights_connection_string" {
+  description = "Application Insights connection string."
+  value       = module.monitoring.connection_string
+  sensitive   = true
+}
+
 output "storage_account_key" {
   description = "Primary access key for the Azure Storage Account (null when blob_storage_enabled = false)."
   sensitive   = true
