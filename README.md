@@ -118,7 +118,7 @@ Almost everything is automatic or configuration-driven — there are no manual p
 
 - **VM scheduling, snapshot cleanup, and PostgreSQL backups** run on their own once enabled via the automation toggles above.
 - **Changing the infrastructure** (firewall CIDRs, VM size, toggles, switching to a static public IP) means editing the Terraform variables; the next deploy reconciles everything, including the matching database firewall rule.
-- The only operator-initiated action is taking an **on-demand VM snapshot** via the `*-snapshot` runbook, when that toggle is enabled.
+- Operator-initiated actions are taking an **on-demand VM snapshot** via the `*-snapshot` runbook (when enabled) and triggering a **rollback** of the container or the infrastructure via the rollback workflow (see *Rollback* below).
 
 ## GitHub Actions integration
 
@@ -149,6 +149,14 @@ Every pull request targeting `main` runs [`.github/workflows/pr-validation.yml`]
 3. Runs `terraform plan -out=tfplan`, publishes the plan as an artifact, and applies **exactly that plan**.
 4. Builds and pushes the container image, publishes the assembled `app-env` to Key Vault, and has the VM load it via its managed identity.
 5. Redeploys the container over SSH and always deletes the temporary NSG rule and the `sync/...` branch when it finishes.
+6. Records two pointers in Key Vault — `app-image-current` and `app-image-previous` — so a rollback always knows the last known-good image (see *Rollback* below).
+
+### Rollback
+
+[`.github/workflows/rollback.yml`](.github/workflows/rollback.yml) is a manual (`workflow_dispatch`) workflow for incident response. It has a `target` (either `container` or `terraform`) and an `apply` switch so you can **preview first and apply only after review**:
+
+- **Container** — redeploys a previous, immutable image tag on the VM. The container registry already stores every image; by default the rollback uses `app-image-previous` from Key Vault (the last known-good tag), or you can pass an explicit `image_tag`. The application configuration on the VM is left untouched — only the image is swapped.
+- **Terraform** — re-applies the infrastructure code from a known-good `git_ref` (SHA, tag or branch) against the live remote state. A saved plan is deliberately **not** used for rollback because it goes stale as soon as the state changes; the canonical, reproducible description of the infrastructure is the git commit, and the state account's versioning + soft delete are the safety net.
 
 Refer to `AUTOMATION.md` for the full automation playbook, including required secrets/variables and how the application and infrastructure repositories coordinate.
 
@@ -163,7 +171,7 @@ Refer to `AUTOMATION.md` for the full automation playbook, including required se
 ├── moved.tf               # State moves for the monolith -> modules refactor
 ├── providers.tf / versions.tf  # Providers + remote azurerm backend declaration
 ├── modules/               # network, compute, database, automation, storage, keyvault, monitoring
-├── .github/workflows/     # pr-validation.yml, security-scan.yml, deploy-from-sync.yml
+├── .github/workflows/     # pr-validation.yml, security-scan.yml, deploy-from-sync.yml, rollback.yml
 ├── scripts/tfvars_meta.py # Utility used by CI to read tfvars metadata
 ├── .trivyignore           # Accepted security-scan baseline
 ├── terraform.tfvars.example
