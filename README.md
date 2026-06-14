@@ -1,6 +1,6 @@
 # Terraform blueprint for the student-friendly Azure stack
 
-This repository contains modular Terraform that stands up a small Azure footprint tailored for Azure for Students subscriptions: one Linux VM that runs your containerized workload and a managed PostgreSQL Flexible Server, with an Azure Key Vault for application secrets and automation to keep costs predictable. The accompanying GitHub Actions pipeline deploys it **secretlessly** (Azure login via OpenID Connect, no long-lived credentials) and the VM reads its runtime configuration from Key Vault using its own managed identity.
+This repository contains modular Terraform that stands up a small Azure footprint tailored for Azure for Students subscriptions: one Linux VM that runs your containerized workload and a managed PostgreSQL Flexible Server, with an Azure Key Vault for application secrets, Application Insights / Log Analytics for observability, and automation to keep costs predictable. The accompanying GitHub Actions pipeline deploys it **secretlessly** (Azure login via OpenID Connect, no long-lived credentials) and the VM reads its runtime configuration from Key Vault using its own managed identity.
 
 ## Architecture overview
 
@@ -14,8 +14,9 @@ Everything lives in a single resource group whose name is derived from `environm
 | **storage** | Optional Azure Storage Account for blobs (`blob_storage_enabled`), Standard LRS, TLS 1.2 only, public access disabled, with **blob versioning and 7-day soft delete** for recoverability. |
 | **automation** | Azure Automation account + runbooks, created only when at least one automation feature is enabled (VM start/stop schedules, ad-hoc snapshots, snapshot cleanup, on-demand PostgreSQL backups). |
 | **keyvault** | Azure Key Vault holding the application secrets (see *Secret management* below), with access policies for the pipeline (read/write) and the VM identity (read). |
+| **monitoring** | Log Analytics workspace (with a daily ingestion cap to keep costs modest), workspace-based Application Insights, diagnostic settings that route PostgreSQL and Key Vault logs/metrics to the workspace, and a free observability **workbook** (requests / exceptions / traces over KQL). |
 
-The root module wires the modules together, owns the resource group, and exposes connection details (SSH command, VM IP, database FQDN/connection string, storage account name) as outputs.
+The root module wires the modules together, owns the resource group, stores the Application Insights connection string in Key Vault, and exposes connection details (SSH command, VM IP, database FQDN/connection string, storage account name, Key Vault name) as outputs.
 
 ## Authentication (secretless / OIDC)
 
@@ -31,6 +32,15 @@ Application secrets live in Azure Key Vault rather than in the application repos
 - The pipeline assembles the full application environment (static base + the live database connection and, when enabled, the storage account credentials) and publishes it to Key Vault as the `app-env` secret. The static base is seeded once from `APP_ENV_VARS_B64` and thereafter stored as `app-env-base`.
 - The database connection string and the storage account name/key are also stored as individual Key Vault secrets.
 - At deploy time the **VM fetches `app-env` from Key Vault using its managed identity** (via the instance metadata service) and writes `app.env`; the container then starts with `--env-file`. No application secret is copied over SSH.
+
+## Observability (Application Insights / Log Analytics)
+
+Telemetry and resource logs land in a single Log Analytics workspace, with cost kept predictable by design:
+
+- **Application Insights** is workspace-based; its connection string is stored in Key Vault (`appinsights-connection-string`) and injected into the application environment, so the app reports requests, dependencies, exceptions, and traces.
+- **Diagnostic settings** forward PostgreSQL and Key Vault logs/metrics into the same workspace.
+- A free Application Insights **workbook** (`<prefix> observability`) charts requests, top exceptions, and recent traces with ready-made KQL queries.
+- A **daily ingestion cap** keeps the bill modest: `log_max_total_gb` (default `3`) is enforced as `daily_quota_gb = log_max_total_gb / retention_days`. Set it to `-1` to disable the cap. (Azure's minimum workspace retention is 30 days, so the cap limits ingestion rate rather than deleting old data row by row.)
 
 ## Remote state
 
@@ -100,7 +110,7 @@ terraform apply
 - `vm_public_ip` / `ssh_connection_string` – Connect to the VM.
 - `database_fqdn` / `database_connection_string` – Configure your application. The connection string uses TLS (`sslmode=require`).
 - `storage_account_name` – Available only when `blob_storage_enabled = true`.
-- `key_vault_name` – The Key Vault that holds the application secrets.
+- `key_vault_name` – The Key Vault that holds the application secrets (including the Application Insights connection string).
 
 ## Operations
 
@@ -152,7 +162,7 @@ Refer to `AUTOMATION.md` for the full automation playbook, including required se
 ├── outputs.tf             # Connection details for operators and CI
 ├── moved.tf               # State moves for the monolith -> modules refactor
 ├── providers.tf / versions.tf  # Providers + remote azurerm backend declaration
-├── modules/               # network, compute, database, automation, storage, keyvault
+├── modules/               # network, compute, database, automation, storage, keyvault, monitoring
 ├── .github/workflows/     # pr-validation.yml, security-scan.yml, deploy-from-sync.yml
 ├── scripts/tfvars_meta.py # Utility used by CI to read tfvars metadata
 ├── .trivyignore           # Accepted security-scan baseline
