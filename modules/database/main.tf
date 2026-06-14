@@ -31,14 +31,11 @@ resource "azurerm_postgresql_flexible_server_database" "app_db" {
   server_id = azurerm_postgresql_flexible_server.db.id
 }
 
-resource "azurerm_postgresql_flexible_server_firewall_rule" "azure_services" {
-  name      = "allow-azure-services"
-  server_id = azurerm_postgresql_flexible_server.db.id
-
-  start_ip_address = "0.0.0.0"
-  end_ip_address   = "0.0.0.0"
-}
-
+# The PostgreSQL endpoint stays public but is firewalled to a single IP: the
+# VM's static public IP. The previous "allow-azure-services" rule (0.0.0.0) was
+# removed because, on a Flexible Server, it actually allows ANY Azure tenant to
+# connect — not just this deployment. Reaching the DB now requires the VM to have
+# a static public IP (vm_public_ip_static = true), which is the default.
 resource "azurerm_postgresql_flexible_server_firewall_rule" "vm_public_ip" {
   count     = var.vm_public_ip_static ? 1 : 0
   name      = "allow-vm"

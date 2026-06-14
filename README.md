@@ -10,13 +10,18 @@ Everything lives in a single resource group whose name is derived from `environm
 | --- | --- |
 | **network** | /16 virtual network with one VM subnet, NSG (HTTP/HTTPS open, SSH limited to `allowed_admin_cidrs`), public IP (dynamic by default, switchable to static), NIC. |
 | **compute** | Ubuntu 22.04 LTS VM with a 64 GB Premium SSD OS disk, SSH-key auth only, and a **system-assigned managed identity**. |
-| **database** | PostgreSQL Flexible Server (Basic B1ms, 32 GB, auto-grow off by default to stay in the free tier), the default `postgres` database, and firewall rules for Azure services and (optionally) the VM public IP. |
+| **database** | PostgreSQL Flexible Server (Basic B1ms, 32 GB, auto-grow off by default to stay in the free tier) and the default `postgres` database. The endpoint is public but **firewalled to the VM's static public IP only** — there is no broad "allow Azure services" rule. |
 | **storage** | Optional Azure Storage Account for blobs (`blob_storage_enabled`), Standard LRS, TLS 1.2 only, public access disabled, with **blob versioning and 7-day soft delete** for recoverability. |
 | **automation** | Azure Automation account + runbooks, created only when at least one automation feature is enabled (VM start/stop schedules, ad-hoc snapshots, snapshot cleanup, on-demand PostgreSQL backups). |
 | **keyvault** | Azure Key Vault holding the application secrets (see *Secret management* below), with access policies for the pipeline (read/write) and the VM identity (read). |
 | **monitoring** | Log Analytics workspace (with a daily ingestion cap to keep costs modest), workspace-based Application Insights, diagnostic settings that route PostgreSQL and Key Vault logs/metrics to the workspace, and a free observability **workbook** (requests / exceptions / traces over KQL). |
 
 The root module wires the modules together, owns the resource group, stores the Application Insights connection string in Key Vault, and exposes connection details (SSH command, VM IP, database FQDN/connection string, storage account name, Key Vault name) as outputs.
+
+## Network security
+
+- The VM exposes only HTTP/HTTPS publicly; SSH is restricted to `allowed_admin_cidrs` and the pipeline opens a temporary, run-scoped SSH rule that is always removed afterwards.
+- **PostgreSQL** keeps a public endpoint but is firewalled to a **single IP — the VM's static public IP**. The default `vm_public_ip_static = true` guarantees that IP is stable across VM stop/start, so the allow-list rule stays valid. (A full private endpoint / VNet-integrated server is intentionally not used: on a Flexible Server the networking model is fixed at creation and switching it is a destructive, data-migrating operation.)
 
 ## Authentication (secretless / OIDC)
 

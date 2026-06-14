@@ -8,7 +8,8 @@ vm_size              = "Standard_B1s"
 vm_admin_username    = "azureuser"
 admin_ssh_public_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAISAMPLEKEY user@example"
 automation_location  = "eastus"
-vm_public_ip_static  = false
+# Required for DB connectivity: PostgreSQL is firewalled to the VM's IP only.
+vm_public_ip_static  = true
 
 # VM networking & schedule
 vm_http_port            = 80

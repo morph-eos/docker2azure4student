@@ -67,9 +67,9 @@ variable "vm_https_port" {
 }
 
 variable "vm_public_ip_static" {
-  description = "If true, allocates a static public IP instead of the default dynamic one."
+  description = "If true, allocates a static public IP for the VM. This is required for database connectivity: PostgreSQL is firewalled to the VM's IP only, and a static IP keeps that allow-list rule valid across VM stop/start. Disabling it removes the DB firewall rule and the app will not be able to reach PostgreSQL."
   type        = bool
-  default     = false
+  default     = true
 }
 
 variable "automation_location" {

@@ -373,7 +373,6 @@ jobs:
               terraform import module.database.random_string.db_suffix "$suffix" 2>&1 || echo "WARN: Import failed for random_string.db_suffix"
             fi
             import_if_exists "module.database.azurerm_postgresql_flexible_server_database.app_db" "${pg_id}/databases/postgres"
-            import_if_exists "module.database.azurerm_postgresql_flexible_server_firewall_rule.azure_services" "${pg_id}/firewallRules/allow-azure-services"
             if [[ "${VM_PUBLIC_IP_STATIC,,}" == "true" ]]; then
               import_if_exists "module.database.azurerm_postgresql_flexible_server_firewall_rule.vm_public_ip[0]" "${pg_id}/firewallRules/allow-vm"
             else
