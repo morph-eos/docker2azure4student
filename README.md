@@ -8,9 +8,9 @@ Everything lives in a single resource group whose name is derived from `environm
 
 | Module | Resources |
 | --- | --- |
-| **network** | /16 virtual network with one VM subnet, NSG (HTTP/HTTPS open, SSH limited to `allowed_admin_cidrs`), public IP (dynamic by default, switchable to static), NIC. |
+| **network** | /16 virtual network with one VM subnet, NSG (HTTP/HTTPS open, SSH limited to `allowed_admin_cidrs`), a static Standard-SKU public IP, and the VM NIC. |
 | **compute** | Ubuntu 22.04 LTS VM with a 64 GB Premium SSD OS disk, SSH-key auth only, and a **system-assigned managed identity**. |
-| **database** | PostgreSQL Flexible Server (Basic B1ms, 32 GB, auto-grow off by default to stay in the free tier) and the default `postgres` database. The endpoint is public but **firewalled to the VM's static public IP only** — there is no broad "allow Azure services" rule. |
+| **database** | PostgreSQL Flexible Server (Burstable B1ms, 32 GB, auto-grow off by default to stay in the free tier) and the default `postgres` database. The endpoint is public but **firewalled to the VM's static public IP only**. |
 | **storage** | Optional Azure Storage Account for blobs (`blob_storage_enabled`), Standard LRS, TLS 1.2 only, public access disabled, with **blob versioning and 7-day soft delete** for recoverability. |
 | **automation** | Azure Automation account + runbooks, created only when at least one automation feature is enabled (VM start/stop schedules, ad-hoc snapshots, snapshot cleanup, on-demand PostgreSQL backups). |
 | **keyvault** | Azure Key Vault holding the application secrets (see *Secret management* below), with access policies for the pipeline (read/write) and the VM identity (read). |
@@ -122,7 +122,7 @@ terraform apply
 Almost everything is automatic or configuration-driven — there are no manual post-deploy steps:
 
 - **VM scheduling, snapshot cleanup, and PostgreSQL backups** run on their own once enabled via the automation toggles above.
-- **Changing the infrastructure** (firewall CIDRs, VM size, toggles, switching to a static public IP) means editing the Terraform variables; the next deploy reconciles everything, including the matching database firewall rule.
+- **Changing the infrastructure** (firewall CIDRs, VM size, automation toggles) means editing the Terraform variables; the next deploy reconciles everything, including the matching database firewall rule.
 - Operator-initiated actions are taking an **on-demand VM snapshot** via the `*-snapshot` runbook (when enabled) and triggering a **rollback** of the container or the infrastructure via the rollback workflow (see *Rollback* below).
 
 ## GitHub Actions integration
@@ -173,7 +173,7 @@ Refer to `AUTOMATION.md` for the full automation playbook, including required se
 ├── variables.tf           # Input variables with defaults and docs
 ├── locals.tf              # Naming helpers
 ├── outputs.tf             # Connection details for operators and CI
-├── moved.tf               # State moves for the monolith -> modules refactor
+├── moved.tf               # State `moved` blocks mapping resources to their module addresses
 ├── providers.tf / versions.tf  # Providers + remote azurerm backend declaration
 ├── modules/               # network, compute, database, automation, storage, keyvault, monitoring
 ├── .github/workflows/     # pr-validation.yml, security-scan.yml, deploy-from-sync.yml, rollback.yml
