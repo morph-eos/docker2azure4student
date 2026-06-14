@@ -1,0 +1,331 @@
+name: Rollback deployment
+
+# Manual, on-demand rollback (release management / incident response).
+#
+# Two independent targets, both gated behind a manual `apply` switch so you can
+# preview first and apply only after review:
+#
+#   * container  -> redeploy a previous, immutable image tag on the VM. The
+#                   registry already stores every image; Key Vault keeps two
+#                   pointers (app-image-current / app-image-previous) written by
+#                   the deploy workflow, so by default we roll back to the last
+#                   known-good tag. You may also pass an explicit tag.
+#
+#   * terraform  -> re-apply the infrastructure code from a known-good git ref
+#                   (SHA/tag/branch) against the live remote state. A saved
+#                   tfplan is NOT used: it goes stale as soon as state changes.
+#                   The remote state account has versioning + soft delete as the
+#                   safety net.
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: 'What to roll back'
+        type: choice
+        options:
+          - container
+          - terraform
+        required: true
+      image_tag:
+        description: '(container) image tag to roll back to; leave empty to use app-image-previous from Key Vault'
+        type: string
+        required: false
+      git_ref:
+        description: '(terraform) git SHA/tag/branch holding the known-good infra code'
+        type: string
+        required: false
+      apply:
+        description: 'Apply for real? Leave off to preview only (resolve tag / terraform plan).'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  TF_IN_AUTOMATION: 'true'
+  TERRAFORM_WORKING_DIR: '.'
+  CONTAINER_SERVICE_NAME: 'app-service'
+  CONTAINER_HTTP_PORT: '80'
+  CONTAINER_INTERNAL_HTTP_PORT: '8080'
+  CONTAINER_HTTPS_PORT: '443'
+  CONTAINER_INTERNAL_HTTPS_PORT: '8081'
+
+jobs:
+  rollback-container:
+    if: ${{ inputs.target == 'container' }}
+    runs-on: ubuntu-latest
+    environment: production
+    concurrency:
+      group: deploy-${{ github.repository }}
+      cancel-in-progress: false
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Restore terraform.tfvars from secret
+        run: |
+          if [[ -z "${{ secrets.TFVARS_B64 }}" ]]; then
+            echo "Missing TFVARS_B64 secret" >&2
+            exit 1
+          fi
+          echo "${{ secrets.TFVARS_B64 }}" | base64 -d > terraform.tfvars
+
+      - name: Azure login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Ensure remote state backend
+        id: backend
+        working-directory: ${{ env.TERRAFORM_WORKING_DIR }}
+        run: |
+          set -euo pipefail
+          read_tfvar() {
+            grep -E "^[[:space:]]*$1[[:space:]]*=" terraform.tfvars 2>/dev/null \
+              | head -1 | sed -E 's/.*=[[:space:]]*"?([^"#]+)"?.*/\1/' | tr -d '[:space:]'
+          }
+          RG="tfstate-rg"
+          CONTAINER="tfstate"
+          KEY="docker2azure.tfstate"
+          LOC="$(read_tfvar location)";              LOC="${LOC:-francecentral}"
+          ENV_NAME="$(read_tfvar environment_name)";  ENV_NAME="${ENV_NAME:-student-app}"
+          PREFIX="$(printf '%s' "$ENV_NAME" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9' | cut -c1-12)"
+          PREFIX="${PREFIX:-app}"
+          SUB_ID="$(az account show --query id -o tsv)"
+          SUFFIX="$(printf '%s' "$SUB_ID" | sha256sum | cut -c1-8)"
+          SA="${PREFIX}tfst${SUFFIX}"
+          echo "State backend -> rg=$RG sa=$SA container=$CONTAINER key=$KEY"
+          echo "args=-backend-config=resource_group_name=$RG -backend-config=storage_account_name=$SA -backend-config=container_name=$CONTAINER -backend-config=key=$KEY" >> "$GITHUB_OUTPUT"
+
+      - name: Terraform init
+        working-directory: ${{ env.TERRAFORM_WORKING_DIR }}
+        run: terraform init -input=false -reconfigure ${{ steps.backend.outputs.args }}
+
+      - name: Resolve target image and VM
+        id: resolve
+        working-directory: ${{ env.TERRAFORM_WORKING_DIR }}
+        env:
+          INPUT_TAG: ${{ inputs.image_tag }}
+        run: |
+          set -euo pipefail
+          KV="$(terraform output -raw key_vault_name)"
+          VM_IP="$(terraform output -raw vm_public_ip)"
+          [[ -n "$VM_IP" ]] || { echo "Unable to read vm_public_ip" >&2; exit 1; }
+
+          TAG="$INPUT_TAG"
+          if [[ -z "$TAG" ]]; then
+            TAG="$(az keyvault secret show --vault-name "$KV" --name app-image-previous --query value -o tsv 2>/dev/null || true)"
+          fi
+          if [[ -z "$TAG" ]]; then
+            echo "No image_tag provided and no app-image-previous pointer in Key Vault." >&2
+            echo "Pass an explicit image_tag to roll back to." >&2
+            exit 1
+          fi
+          CUR="$(az keyvault secret show --vault-name "$KV" --name app-image-current --query value -o tsv 2>/dev/null || true)"
+          echo "Rollback target tag : $TAG"
+          echo "Currently live tag  : ${CUR:-<unknown>}"
+          echo "kv=$KV" >> "$GITHUB_OUTPUT"
+          echo "vm_ip=$VM_IP" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Preview only (apply is off)
+        if: ${{ !inputs.apply }}
+        run: |
+          echo "Preview mode: would roll the container back to '${{ steps.resolve.outputs.tag }}'."
+          echo "Re-run with 'apply' enabled to perform the rollback."
+
+      - name: Temporarily open SSH
+        if: ${{ inputs.apply }}
+        id: temp-ssh
+        run: |
+          set -euo pipefail
+          env_name="$(grep -E '^[[:space:]]*environment_name[[:space:]]*=' terraform.tfvars 2>/dev/null | head -1 | sed -E 's/.*=[[:space:]]*"?([^"#]+)"?.*/\1/' | tr -d '[:space:]')"
+          env_name="${env_name:-student-app}"
+          normalized=$(printf '%s' "$env_name" | tr '[:upper:]' '[:lower:]')
+          normalized=${normalized// /-}
+          prefix=${normalized:0:45}
+          rg_name="${prefix}-rg"
+          nsg_name="${prefix}-vm-nsg"
+          RULE_NAME="gha-rollback-${{ github.run_id }}"
+          existing_priorities=$(az network nsg rule list --resource-group "$rg_name" --nsg-name "$nsg_name" --query '[].priority' -o tsv | tr '\t' '\n' | tr -d '\r' | sed '/^$/d' || true)
+          priority=4096
+          if [[ -n "$existing_priorities" ]]; then
+            while printf '%s\n' "$existing_priorities" | grep -qx "$priority"; do
+              priority=$((priority-1))
+              if (( priority < 100 )); then
+                echo "No free NSG priority between 100-4096" >&2; exit 1
+              fi
+            done
+          fi
+          az network nsg rule create --resource-group "$rg_name" --nsg-name "$nsg_name" \
+            --name "$RULE_NAME" --priority "$priority" --direction Inbound --access Allow \
+            --protocol Tcp --source-address-prefixes 0.0.0.0/0 --source-port-ranges '*' \
+            --destination-address-prefixes '*' --destination-port-ranges 22 \
+            --only-show-errors --output none
+          echo "rule_name=$RULE_NAME" >> "$GITHUB_OUTPUT"
+          echo "rg_name=$rg_name" >> "$GITHUB_OUTPUT"
+          echo "nsg_name=$nsg_name" >> "$GITHUB_OUTPUT"
+
+      - name: Start SSH agent
+        if: ${{ inputs.apply }}
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.VM_SSH_KEY }}
+
+      - name: Trust VM host key
+        if: ${{ inputs.apply }}
+        env:
+          VM_IP: ${{ steps.resolve.outputs.vm_ip }}
+        run: |
+          set -euo pipefail
+          for attempt in {1..5}; do
+            if ssh-keyscan -H "$VM_IP" >> ~/.ssh/known_hosts 2>/dev/null; then
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "Warning: could not retrieve host key; relying on StrictHostKeyChecking=no" >&2
+
+      - name: Roll container back on VM
+        if: ${{ inputs.apply }}
+        env:
+          IMAGE_URI: ${{ secrets.IMAGE_REGISTRY }}/${{ secrets.IMAGE_NAME }}:${{ steps.resolve.outputs.tag }}
+          REGISTRY_LOGIN_SERVER: ${{ secrets.REGISTRY_LOGIN_SERVER }}
+          CONTAINER_REGISTRY_USERNAME: ${{ secrets.CONTAINER_REGISTRY_USERNAME }}
+          CONTAINER_REGISTRY_PASSWORD: ${{ secrets.CONTAINER_REGISTRY_PASSWORD }}
+          VM_SSH_USERNAME: ${{ secrets.VM_SSH_USERNAME }}
+          VM_IP: ${{ steps.resolve.outputs.vm_ip }}
+        run: |
+          set -euo pipefail
+          # Reuse the app.env already present on the VM (written by the last deploy
+          # from Key Vault). Rollback swaps the image, not the configuration.
+          ssh -o StrictHostKeyChecking=no "${VM_SSH_USERNAME}@${VM_IP}" "
+            set -euo pipefail
+            if [ ! -f /home/${VM_SSH_USERNAME}/app.env ]; then
+              echo 'No app.env on the VM; cannot roll back safely' >&2; exit 1
+            fi
+            sudo mkdir -p /etc/letsencrypt
+            sudo docker login ${REGISTRY_LOGIN_SERVER} -u '${CONTAINER_REGISTRY_USERNAME}' -p '${CONTAINER_REGISTRY_PASSWORD}'
+            sudo docker pull ${IMAGE_URI}
+            sudo docker stop ${CONTAINER_SERVICE_NAME} || true
+            sudo docker rm ${CONTAINER_SERVICE_NAME} || true
+            sudo docker run -d --name ${CONTAINER_SERVICE_NAME} --env-file /home/${VM_SSH_USERNAME}/app.env -p ${CONTAINER_HTTP_PORT}:${CONTAINER_INTERNAL_HTTP_PORT} -p ${CONTAINER_HTTPS_PORT}:${CONTAINER_INTERNAL_HTTPS_PORT} -v /etc/letsencrypt:/etc/letsencrypt --restart unless-stopped ${IMAGE_URI}
+          "
+
+      - name: Update current pointer in Key Vault
+        if: ${{ inputs.apply }}
+        env:
+          KV: ${{ steps.resolve.outputs.kv }}
+          TAG: ${{ steps.resolve.outputs.tag }}
+        run: |
+          set -euo pipefail
+          # After a rollback the live tag is the one we rolled back to. We leave
+          # app-image-previous untouched on purpose, so a second rollback does not
+          # bounce forward to the bad version.
+          az keyvault secret set --vault-name "$KV" --name app-image-current --value "$TAG" -o none
+          echo "Container rolled back; app-image-current=$TAG"
+
+      - name: Remove temporary SSH rule
+        if: ${{ always() && steps.temp-ssh.outputs.rule_name != '' }}
+        run: |
+          set -euo pipefail
+          az network nsg rule delete \
+            --resource-group "${{ steps.temp-ssh.outputs.rg_name }}" \
+            --nsg-name "${{ steps.temp-ssh.outputs.nsg_name }}" \
+            --name "${{ steps.temp-ssh.outputs.rule_name }}" \
+            --only-show-errors --output none
+
+  rollback-terraform:
+    if: ${{ inputs.target == 'terraform' }}
+    runs-on: ubuntu-latest
+    environment: production
+    concurrency:
+      group: deploy-${{ github.repository }}
+      cancel-in-progress: false
+    steps:
+      - name: Validate inputs
+        run: |
+          if [[ -z "${{ inputs.git_ref }}" ]]; then
+            echo "git_ref is required for a terraform rollback (the known-good SHA/tag/branch)." >&2
+            exit 1
+          fi
+
+      - name: Checkout known-good ref
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.git_ref }}
+          fetch-depth: 0
+
+      - name: Restore terraform.tfvars from secret
+        run: |
+          if [[ -z "${{ secrets.TFVARS_B64 }}" ]]; then
+            echo "Missing TFVARS_B64 secret" >&2
+            exit 1
+          fi
+          echo "${{ secrets.TFVARS_B64 }}" | base64 -d > terraform.tfvars
+
+      - name: Azure login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Ensure remote state backend
+        id: backend
+        working-directory: ${{ env.TERRAFORM_WORKING_DIR }}
+        run: |
+          set -euo pipefail
+          read_tfvar() {
+            grep -E "^[[:space:]]*$1[[:space:]]*=" terraform.tfvars 2>/dev/null \
+              | head -1 | sed -E 's/.*=[[:space:]]*"?([^"#]+)"?.*/\1/' | tr -d '[:space:]'
+          }
+          RG="tfstate-rg"
+          CONTAINER="tfstate"
+          KEY="docker2azure.tfstate"
+          LOC="$(read_tfvar location)";              LOC="${LOC:-francecentral}"
+          ENV_NAME="$(read_tfvar environment_name)";  ENV_NAME="${ENV_NAME:-student-app}"
+          PREFIX="$(printf '%s' "$ENV_NAME" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9' | cut -c1-12)"
+          PREFIX="${PREFIX:-app}"
+          SUB_ID="$(az account show --query id -o tsv)"
+          SUFFIX="$(printf '%s' "$SUB_ID" | sha256sum | cut -c1-8)"
+          SA="${PREFIX}tfst${SUFFIX}"
+          echo "State backend -> rg=$RG sa=$SA container=$CONTAINER key=$KEY"
+          echo "args=-backend-config=resource_group_name=$RG -backend-config=storage_account_name=$SA -backend-config=container_name=$CONTAINER -backend-config=key=$KEY" >> "$GITHUB_OUTPUT"
+
+      - name: Terraform init
+        working-directory: ${{ env.TERRAFORM_WORKING_DIR }}
+        run: terraform init -input=false -reconfigure ${{ steps.backend.outputs.args }}
+
+      - name: Terraform plan (rollback to ${{ inputs.git_ref }})
+        working-directory: ${{ env.TERRAFORM_WORKING_DIR }}
+        run: terraform plan -input=false -out=tfplan
+
+      - name: Upload rollback plan
+        uses: actions/upload-artifact@v4
+        with:
+          name: rollback-plan-${{ github.run_id }}
+          path: ${{ env.TERRAFORM_WORKING_DIR }}/tfplan
+          retention-days: 30
+
+      - name: Preview only (apply is off)
+        if: ${{ !inputs.apply }}
+        run: |
+          echo "Preview mode: reviewed the plan above for rollback to '${{ inputs.git_ref }}'."
+          echo "Re-run with 'apply' enabled to apply this plan."
+
+      - name: Terraform apply
+        if: ${{ inputs.apply }}
+        working-directory: ${{ env.TERRAFORM_WORKING_DIR }}
+        run: terraform apply -input=false tfplan

@@ -665,6 +665,24 @@ jobs:
             sudo docker run -d --name ${CONTAINER_SERVICE_NAME} --env-file /home/${{ env.VM_SSH_USERNAME }}/app.env -p ${CONTAINER_HTTP_PORT}:${CONTAINER_INTERNAL_HTTP_PORT} -p ${CONTAINER_HTTPS_PORT}:${CONTAINER_INTERNAL_HTTPS_PORT} -v /etc/letsencrypt:/etc/letsencrypt --restart unless-stopped ${IMAGE_URI}
           "
 
+      - name: Record deployed image pointers in Key Vault
+        working-directory: ${{ env.TERRAFORM_WORKING_DIR }}
+        env:
+          NEW_TAG: ${{ steps.manifest.outputs.image_tag }}
+        run: |
+          set -euo pipefail
+          # The container registry already stores every image immutably; here we
+          # only keep two pointers so rollback knows the last known-good versions:
+          #   app-image-current  -> the tag just deployed
+          #   app-image-previous -> the tag that was live before this deploy
+          KV="$(terraform output -raw key_vault_name)"
+          CUR="$(az keyvault secret show --vault-name "$KV" --name app-image-current --query value -o tsv 2>/dev/null || true)"
+          if [[ -n "$CUR" && "$CUR" != "$NEW_TAG" ]]; then
+            az keyvault secret set --vault-name "$KV" --name app-image-previous --value "$CUR" -o none
+          fi
+          az keyvault secret set --vault-name "$KV" --name app-image-current --value "$NEW_TAG" -o none
+          echo "Recorded image pointers: current=$NEW_TAG previous=${CUR:-<none>}"
+
       - name: Remove temporary SSH rule
         if: always() && steps.temp-ssh.outputs.rule_name != ''
         run: |
