@@ -63,7 +63,7 @@ jobs:
       cancel-in-progress: false
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Restore terraform.tfvars from secret
         run: |
@@ -74,14 +74,14 @@ jobs:
           echo "${{ secrets.TFVARS_B64 }}" | base64 -d > terraform.tfvars
 
       - name: Azure login
-        uses: azure/login@v2
+        uses: azure/login@v3
         with:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
       - name: Set up Terraform
-        uses: hashicorp/setup-terraform@v3
+        uses: hashicorp/setup-terraform@v4
 
       - name: Ensure remote state backend
         id: backend
@@ -176,7 +176,7 @@ jobs:
 
       - name: Start SSH agent
         if: ${{ inputs.apply }}
-        uses: webfactory/ssh-agent@v0.9.0
+        uses: webfactory/ssh-agent@v0.10.0
         with:
           ssh-private-key: ${{ secrets.VM_SSH_KEY }}
 
@@ -259,7 +259,7 @@ jobs:
           fi
 
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -280,14 +280,14 @@ jobs:
           echo "${{ secrets.TFVARS_B64 }}" | base64 -d > terraform.tfvars
 
       - name: Azure login
-        uses: azure/login@v2
+        uses: azure/login@v3
         with:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
       - name: Set up Terraform
-        uses: hashicorp/setup-terraform@v3
+        uses: hashicorp/setup-terraform@v4
 
       - name: Ensure remote state backend
         id: backend
@@ -320,7 +320,7 @@ jobs:
         run: terraform plan -input=false -out=tfplan
 
       - name: Upload rollback plan
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: rollback-plan-${{ github.run_id }}
           path: ${{ env.TERRAFORM_WORKING_DIR }}/tfplan
