@@ -156,6 +156,8 @@ Every pull request targeting `main` runs [`.github/workflows/pr-validation.yml`]
 5. Redeploys the container over SSH and always deletes the temporary NSG rule and the `sync/...` branch when it finishes.
 6. Records two pointers in Key Vault — `app-image-current` and `app-image-previous` — so a rollback always knows the last known-good image (see *Rollback* below).
 
+The job's `concurrency.group` is fixed per target environment (`deploy-<repo>-production`), not per sync branch — two deploys dispatched close together queue instead of racing each other's Terraform apply and SSH-based container steps against the same VM.
+
 ### Rollback
 
 [`.github/workflows/rollback.yml`](.github/workflows/rollback.yml) is a manual (`workflow_dispatch`) workflow for incident response. It has a `target` (either `container` or `terraform`) and an `apply` switch so you can **preview first and apply only after review**:

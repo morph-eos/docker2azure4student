@@ -23,8 +23,16 @@ jobs:
     outputs:
       sync_branch: ${{ steps.sync-branch.outputs.value }}
       image_tag: ${{ steps.manifest.outputs.image_tag }}
+    # Keyed on the target environment, not the sync branch/run: every push
+    # creates a uniquely-named sync/<run-id>-<sha> branch, so a per-branch
+    # group (the previous key) never actually serialized anything -- two
+    # deploys dispatched close together would run their VM-provisioning and
+    # SSH-based container steps concurrently against the same VM, racing
+    # each other (observed: a second run's SSH session got reset mid-deploy
+    # while the first was still deploying, and the site was unreachable for
+    # the ~8 minutes both were fighting over it).
     concurrency:
-      group: deploy-${{ github.repository }}-${{ github.event_name == 'workflow_dispatch' && github.event.inputs.sync_branch || github.ref_name }}
+      group: deploy-${{ github.repository }}-production
       cancel-in-progress: false
     env:
       TF_IN_AUTOMATION: 'true'
