@@ -49,6 +49,14 @@ Telemetry and resource logs land in a single Log Analytics workspace, with cost 
 
 - A **low-memory alert** fires when the VM's average available memory over 15 minutes drops below `memory_alert_threshold_mb` (default `60`). It notifies, through an email-only action group, every Owner of the subscription (Azure resolves the addresses itself) plus the optional `alert_email`. Confirm the metric alert price in the Azure portal, and use the portal's "Test action group" button once after the first apply to check the mail arrives.
 
+Further alerts, all through the same action group:
+
+- **Database**: storage above 85% and CPU above 90% for 30 minutes.
+- **Automation jobs**: any runbook job `Failed` or `Suspended` (only when the Automation Account exists).
+- **Site availability and TLS**: a standard web test hits `site_url` every 10 minutes from three locations and fails when the certificate has under 14 days left; the alert fires when at least two locations fail. The deploy workflow fills `site_url` from the `DOMAIN` in the `APP_ENV_VARS_B64` secret; with no `DOMAIN` the test is skipped. Confirm the standard web test price in the Azure portal.
+
+The VM's disk usage has no host metric, so it is not alerted on.
+
 ### Host preparation and container logs
 
 Before each container start, the deploy runs `scripts/vm-prepare-host.sh` on the VM. It is idempotent and:
