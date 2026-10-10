@@ -40,3 +40,20 @@ variable "key_vault_id" {
   description = "Resource ID of the Key Vault to route diagnostics from."
   type        = string
 }
+
+variable "vm_id" {
+  description = "Resource ID of the VM whose available memory is alerted on."
+  type        = string
+}
+
+variable "alert_email" {
+  description = "Optional extra email address notified by alerts, in addition to the subscription Owners."
+  type        = string
+  default     = ""
+}
+
+variable "memory_alert_threshold_mb" {
+  description = "The memory alert fires when the VM's average available memory over 15 minutes drops below this many MB."
+  type        = number
+  default     = 60
+}

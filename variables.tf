@@ -16,6 +16,12 @@ variable "log_max_total_gb" {
   default     = 3
 }
 
+variable "alert_email" {
+  description = "Optional extra email address notified by alerts, in addition to the subscription Owners."
+  type        = string
+  default     = ""
+}
+
 variable "location" {
   description = "Azure region for every resource."
   type        = string

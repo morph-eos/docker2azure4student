@@ -47,6 +47,23 @@ Telemetry and resource logs land in a single Log Analytics workspace, with cost 
 - A free Application Insights **workbook** (`<prefix> observability`) charts requests, top exceptions, and recent traces with ready-made KQL queries.
 - A **daily ingestion cap** keeps the bill modest: `log_max_total_gb` (default `3`) is enforced as `daily_quota_gb = log_max_total_gb / retention_days`. Set it to `-1` to disable the cap. (Azure's minimum workspace retention is 30 days, so the cap limits ingestion rate rather than deleting old data row by row.)
 
+- A **low-memory alert** fires when the VM's average available memory over 15 minutes drops below `memory_alert_threshold_mb` (default `60`). It notifies, through an email-only action group, every Owner of the subscription (Azure resolves the addresses itself) plus the optional `alert_email`. Confirm the metric alert price in the Azure portal, and use the portal's "Test action group" button once after the first apply to check the mail arrives.
+
+### Host preparation and container logs
+
+Before each container start, the deploy runs `scripts/vm-prepare-host.sh` on the VM. It is idempotent and:
+
+- creates a 2 GiB swap file (`/swapfile`), registers it in `/etc/fstab` and sets `vm.swappiness=10`; free memory is printed before and after in the deploy log;
+- enables persistent journald with `SystemMaxUse=300M`.
+
+The container runs with `--log-driver journald`, so nginx, Next.js and Django output survives the `docker rm` of every deploy, with disk usage capped by journald. Read it on the VM with `journalctl CONTAINER_NAME=app-service --since "2 days ago"` (or `docker logs`).
+
+Where to look first for slowness:
+
+1. Log Analytics `AppRequests` (Django request durations and failures).
+2. VM metrics in the portal: available memory, and swap usage via `free -m` on the VM.
+3. Host and container logs through `journalctl` on the VM (nginx timings, 4xx/5xx, Next.js errors).
+
 ## Remote state
 
 Terraform state is stored remotely in Azure Storage so that it survives ephemeral CI runners, is shared across machines, and is protected against concurrent writes (the `azurerm` backend takes a blob lease, which stops two `terraform apply` runs from corrupting the state at the same time).
@@ -180,6 +197,7 @@ Refer to `AUTOMATION.md` for the full automation playbook, including required se
 ├── modules/               # network, compute, database, automation, storage, keyvault, monitoring
 ├── .github/workflows/     # pr-validation.yml, security-scan.yml, deploy-from-sync.yml, rollback.yml
 ├── scripts/tfvars_meta.py # Utility used by CI to read tfvars metadata
+├── scripts/vm-prepare-host.sh # Idempotent VM prep: swap file, persistent journald
 ├── .trivyignore           # Accepted security-scan baseline
 ├── terraform.tfvars.example
 ├── README.md

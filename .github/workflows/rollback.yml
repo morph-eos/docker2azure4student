@@ -217,7 +217,7 @@ jobs:
             sudo docker pull ${IMAGE_URI}
             sudo docker stop ${CONTAINER_SERVICE_NAME} || true
             sudo docker rm ${CONTAINER_SERVICE_NAME} || true
-            sudo docker run -d --name ${CONTAINER_SERVICE_NAME} --env-file /home/${VM_SSH_USERNAME}/app.env -p ${CONTAINER_HTTP_PORT}:${CONTAINER_INTERNAL_HTTP_PORT} -p ${CONTAINER_HTTPS_PORT}:${CONTAINER_INTERNAL_HTTPS_PORT} -v /etc/letsencrypt:/etc/letsencrypt --restart unless-stopped ${IMAGE_URI}
+            sudo docker run -d --name ${CONTAINER_SERVICE_NAME} --env-file /home/${VM_SSH_USERNAME}/app.env -p ${CONTAINER_HTTP_PORT}:${CONTAINER_INTERNAL_HTTP_PORT} -p ${CONTAINER_HTTPS_PORT}:${CONTAINER_INTERNAL_HTTPS_PORT} -v /etc/letsencrypt:/etc/letsencrypt --log-driver journald --restart unless-stopped ${IMAGE_URI}
           "
 
       - name: Update current pointer in Key Vault

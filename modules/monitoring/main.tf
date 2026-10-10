@@ -107,3 +107,53 @@ resource "azurerm_application_insights_workbook" "observability" {
 
   tags = merge(var.tags, { component = "monitoring" })
 }
+
+# Low-memory alert on the VM host metric (no agent needed). Metric alert rules
+# and an email-only action group cost a negligible amount. Notifications go to
+# every Owner of the subscription, plus var.alert_email when set.
+resource "azurerm_monitor_action_group" "ops" {
+  name                = "${var.name_prefix}-ops"
+  resource_group_name = var.resource_group_name
+  short_name          = "locus-ops"
+
+  arm_role_receiver {
+    name                    = "subscription-owners"
+    role_id                 = "8e3af657-a8ff-443c-a75c-2fe8c4bcb635" # Owner
+    use_common_alert_schema = true
+  }
+
+  dynamic "email_receiver" {
+    for_each = var.alert_email == "" ? [] : [var.alert_email]
+    content {
+      name                    = "ops"
+      email_address           = email_receiver.value
+      use_common_alert_schema = true
+    }
+  }
+
+  tags = merge(var.tags, { component = "monitoring" })
+}
+
+resource "azurerm_monitor_metric_alert" "vm_memory_low" {
+  name                = "${var.name_prefix}-vm-memory-low"
+  resource_group_name = var.resource_group_name
+  scopes              = [var.vm_id]
+  description         = "VM available memory is below ${var.memory_alert_threshold_mb} MB."
+  severity            = 2
+  frequency           = "PT5M"
+  window_size         = "PT15M"
+
+  criteria {
+    metric_namespace = "Microsoft.Compute/virtualMachines"
+    metric_name      = "Available Memory Bytes"
+    aggregation      = "Average"
+    operator         = "LessThan"
+    threshold        = var.memory_alert_threshold_mb * 1024 * 1024
+  }
+
+  action {
+    action_group_id = azurerm_monitor_action_group.ops.id
+  }
+
+  tags = merge(var.tags, { component = "monitoring" })
+}
