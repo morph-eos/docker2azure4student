@@ -69,9 +69,3 @@ variable "automation_account_id" {
   type        = string
   default     = null
 }
-
-variable "site_url" {
-  description = "Public HTTPS URL probed by the availability test, which also fails when the TLS certificate has under 14 days left. Empty disables the test and its alert."
-  type        = string
-  default     = ""
-}
