@@ -83,7 +83,7 @@ resource "azurerm_application_insights_standard_web_test" "site" {
   resource_group_name     = var.resource_group_name
   location                = var.location
   application_insights_id = azurerm_application_insights.main.id
-  geo_locations           = ["emea-nl-ams-azr", "emea-gb-db3-azr", "us-va-ash-azr"]
+  geo_locations           = ["emea-nl-ams-azr"]
   frequency               = 600
   timeout                 = 30
   enabled                 = true
@@ -109,7 +109,7 @@ resource "azurerm_monitor_metric_alert" "site_unavailable" {
   name                = "${var.name_prefix}-site-unavailable"
   resource_group_name = var.resource_group_name
   scopes              = [azurerm_application_insights.main.id, azurerm_application_insights_standard_web_test.site[0].id]
-  description         = "The public site is unreachable from at least two locations, or its TLS certificate expires within 14 days."
+  description         = "The public site is unreachable from the test location, or its TLS certificate expires within 14 days."
   severity            = 1
   frequency           = "PT5M"
   window_size         = "PT15M"
@@ -117,7 +117,7 @@ resource "azurerm_monitor_metric_alert" "site_unavailable" {
   application_insights_web_test_location_availability_criteria {
     web_test_id           = azurerm_application_insights_standard_web_test.site[0].id
     component_id          = azurerm_application_insights.main.id
-    failed_location_count = 2
+    failed_location_count = 1
   }
 
   action {
