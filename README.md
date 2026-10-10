@@ -53,7 +53,7 @@ Further alerts, all through the same action group:
 
 - **Database**: storage above 85% and CPU above 90% for 30 minutes.
 - **Automation jobs**: any runbook job `Failed` or `Suspended` (only when the Automation Account exists).
-- **Site availability and TLS**: a standard web test hits `site_url` (`https://<DOMAIN>/landing`, a page that answers 200 without redirects) every 10 minutes from three locations and fails when the certificate has under 14 days left; the alert fires when at least two locations fail. The deploy workflow fills `site_url` from the `DOMAIN` in the `APP_ENV_VARS_B64` secret; with no `DOMAIN` the test is skipped. Confirm the standard web test price in the Azure portal.
+- **Site availability and TLS**: a standard web test hits `site_url` (`https://<DOMAIN>/landing`, a page that answers 200 without redirects) every 10 minutes from a single location (Western Europe, to keep the per-location price down) and fails when the certificate has under 14 days left; the alert fires when that test fails. The deploy workflow fills `site_url` from the `DOMAIN` in the `APP_ENV_VARS_B64` secret; with no `DOMAIN` the test is skipped. Confirm the standard web test price in the Azure portal.
 
 The VM's disk usage has no host metric, so it is not alerted on.
 
