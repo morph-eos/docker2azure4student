@@ -57,3 +57,21 @@ variable "memory_alert_threshold_mb" {
   type        = number
   default     = 60
 }
+
+variable "automation_enabled" {
+  description = "Whether the Automation Account exists. Enables the failed-job alert."
+  type        = bool
+  default     = false
+}
+
+variable "automation_account_id" {
+  description = "Resource ID of the Automation Account, or null when it does not exist."
+  type        = string
+  default     = null
+}
+
+variable "site_url" {
+  description = "Public HTTPS URL probed by the availability test, which also fails when the TLS certificate has under 14 days left. Empty disables the test and its alert."
+  type        = string
+  default     = ""
+}

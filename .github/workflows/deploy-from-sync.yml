@@ -407,6 +407,20 @@ jobs:
 
           echo "OK: Import phase completed"
 
+      - name: Derive site URL for the availability test
+        env:
+          APP_ENV_VARS_B64: ${{ secrets.APP_ENV_VARS_B64 }}
+        run: |
+          # The availability and certificate-expiry test probes the app's own
+          # DOMAIN; without one the test is skipped.
+          domain="$(printf '%s' "${APP_ENV_VARS_B64:-}" | base64 -d 2>/dev/null | sed -n 's/^DOMAIN=//p' | head -1 | tr -d '"\r ')"
+          if [[ -n "$domain" ]]; then
+            echo "TF_VAR_site_url=https://${domain}/" >> "$GITHUB_ENV"
+            echo "Availability test target: https://${domain}/"
+          else
+            echo "DOMAIN not found in APP_ENV_VARS_B64; skipping the availability test"
+          fi
+
       - name: Terraform plan
         working-directory: ${{ env.TERRAFORM_WORKING_DIR }}
         run: terraform plan -input=false -out=tfplan

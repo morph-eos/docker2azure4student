@@ -22,6 +22,12 @@ variable "alert_email" {
   default     = ""
 }
 
+variable "site_url" {
+  description = "Public HTTPS URL for the availability and certificate-expiry test. The deploy workflow fills it from the app's DOMAIN; empty skips the test."
+  type        = string
+  default     = ""
+}
+
 variable "location" {
   description = "Azure region for every resource."
   type        = string
