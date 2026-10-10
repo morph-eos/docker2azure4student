@@ -131,6 +131,8 @@ module "monitoring" {
   postgres_id         = module.database.server_id
   key_vault_id        = module.keyvault.key_vault_id
   max_total_gb        = var.log_max_total_gb
+  vm_id               = module.compute.vm_id
+  alert_email         = var.alert_email
 }
 
 resource "azurerm_key_vault_secret" "appinsights_connection_string" {

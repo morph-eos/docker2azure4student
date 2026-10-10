@@ -16,6 +16,12 @@ variable "log_max_total_gb" {
   default     = 3
 }
 
+variable "alert_email" {
+  description = "Email address notified by the VM low-memory alert. Leave empty to skip creating the alert."
+  type        = string
+  default     = ""
+}
+
 variable "location" {
   description = "Azure region for every resource."
   type        = string
