@@ -47,7 +47,7 @@ variable "vm_id" {
 }
 
 variable "alert_email" {
-  description = "Email address notified by the VM memory alert. Empty disables the alert and its action group."
+  description = "Optional extra email address notified by alerts, in addition to the subscription Owners."
   type        = string
   default     = ""
 }

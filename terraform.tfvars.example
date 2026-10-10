@@ -40,5 +40,5 @@ vm_snapshot_cleanup_time    = "03:00"
 vm_snapshot_cleanup_timezone = "Europe/Rome"
 blob_storage_enabled         = false
 
-# Optional: email notified when VM available memory runs low (empty = no alert)
+# Optional: extra email for alerts (subscription Owners are always notified)
 alert_email                  = ""

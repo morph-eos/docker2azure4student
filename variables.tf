@@ -17,7 +17,7 @@ variable "log_max_total_gb" {
 }
 
 variable "alert_email" {
-  description = "Email address notified by the VM low-memory alert. Leave empty to skip creating the alert."
+  description = "Optional extra email address notified by alerts, in addition to the subscription Owners."
   type        = string
   default     = ""
 }

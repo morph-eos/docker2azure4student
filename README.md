@@ -47,7 +47,7 @@ Telemetry and resource logs land in a single Log Analytics workspace, with cost 
 - A free Application Insights **workbook** (`<prefix> observability`) charts requests, top exceptions, and recent traces with ready-made KQL queries.
 - A **daily ingestion cap** keeps the bill modest: `log_max_total_gb` (default `3`) is enforced as `daily_quota_gb = log_max_total_gb / retention_days`. Set it to `-1` to disable the cap. (Azure's minimum workspace retention is 30 days, so the cap limits ingestion rate rather than deleting old data row by row.)
 
-- A **low-memory alert** fires when the VM's average available memory over 15 minutes drops below `memory_alert_threshold_mb` (default `60`). It is created only when `alert_email` is set (empty by default), and notifies that address through an email-only action group. Confirm the metric alert price in the Azure portal before enabling it.
+- A **low-memory alert** fires when the VM's average available memory over 15 minutes drops below `memory_alert_threshold_mb` (default `60`). It notifies, through an email-only action group, every Owner of the subscription (Azure resolves the addresses itself) plus the optional `alert_email`. Confirm the metric alert price in the Azure portal, and use the portal's "Test action group" button once after the first apply to check the mail arrives.
 
 ### Host preparation and container logs
 
