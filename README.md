@@ -30,6 +30,10 @@ The pipeline authenticates to Azure through **workload identity federation (Open
 - `azure/login` exchanges a short-lived GitHub OIDC token for an Azure access token, using the `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, and `AZURE_SUBSCRIPTION_ID` **repository variables** (these are identifiers, not secrets).
 - The deployment job runs in the `production` GitHub environment, so the OIDC token's subject matches a **federated credential** registered on the Azure app registration.
 
+## Workflow supply chain
+
+Every third-party GitHub Action in `.github/workflows/` is pinned to a full commit SHA, with the tag it corresponds to in a trailing comment. Dependabot (`.github/dependabot.yml`) opens a weekly grouped pull request that moves the SHAs forward, so the pins do not go stale. When adding an action, pin it the same way instead of using a tag.
+
 ## Secret management (Key Vault)
 
 Application secrets live in Azure Key Vault rather than in the application repository:
