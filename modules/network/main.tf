@@ -15,6 +15,8 @@ resource "azurerm_subnet" "vm" {
   resource_group_name  = var.resource_group_name
   virtual_network_name = azurerm_virtual_network.main.name
   address_prefixes     = ["10.10.1.0/24"]
+  # The value the existing subnets already have (the provider default changed in 4.x); no private endpoints are used here.
+  private_endpoint_network_policies = "Enabled"
 }
 
 resource "azurerm_network_security_group" "vm" {

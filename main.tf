@@ -25,6 +25,7 @@ module "compute" {
   resource_group_name  = azurerm_resource_group.main.name
   tags                 = var.tags
   vm_size              = var.vm_size
+  vm_image             = var.vm_image
   vm_admin_username    = var.vm_admin_username
   admin_ssh_public_key = var.admin_ssh_public_key
   network_interface_id = module.network.network_interface_id

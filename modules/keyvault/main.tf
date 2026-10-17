@@ -6,6 +6,8 @@ resource "azurerm_key_vault" "main" {
   sku_name                   = "standard"
   soft_delete_retention_days = 7
   purge_protection_enabled   = false
+  # Access policies, not RBAC: the pipeline is only Contributor (see below). Required since azurerm 5.
+  rbac_authorization_enabled = false
 
   tags = merge(var.tags, { component = "security" })
 }

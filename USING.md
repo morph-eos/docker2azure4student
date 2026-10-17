@@ -49,6 +49,19 @@ To update: change the version in the two callers, in a pull request of one line,
 - Repository secrets are readable by any workflow on any branch of your repository, so keep write access to it small. GitHub gives a *called* workflow no access to environment secrets.
 - Third-party actions inside the template are pinned to commit SHAs; set *Require actions to be pinned* in your repository too.
 
+## Upgrading
+### From v1 to v2 (Ubuntu 24.04 and azurerm 5)
+`v2.0.0` moves the VM from Ubuntu 22.04 to **Ubuntu 24.04 LTS** (supported until 2029; 22.04's standard support ends in 2027) and the Terraform provider from azurerm 3 to **5**. That is why it is a major version: the next deploy **replaces the VM** (a new OS disk). Expect about 8 minutes without the site, and:
+- the Let's Encrypt certificate is issued again by the app's entrypoint when the container starts (the DNS name must still point at the VM's static IP, which does not change);
+- the VM's SSH host key changes: update `VM_HOST_KEY` if you pinned it;
+- the database, the Key Vault, the storage account and the network are untouched; the VM's managed identity is new and its Key Vault access policy is recreated in the same run;
+- the deploy workflow takes a **snapshot of the old OS disk** before applying (a notice with its name, and the command to delete it, appears in the run) so that you can recover anything from it. Delete it when you have verified the new VM; it costs a little every month.
+
+Before taking it, run a **preview**: the rollback workflow with `target: terraform`, `git_ref: v2.0.0` and `apply` off prints the plan against your real state without changing anything. It must show the VM and its Key Vault access policy "must be replaced", and nothing else you do not expect. To stay on Ubuntu 22.04 for now set `vm_image` in your `terraform.tfvars` (the commented example in `terraform.tfvars.example`) or stay on `@v1`.
+
+### Changing the operating system image later
+`vm_image` is a variable (publisher, offer, sku, version). Changing it always replaces the VM, with the snapshot and the steps above; `version = "latest"` never replaces it by itself, so an existing VM is not touched when Canonical publishes a new build. For the in-place alternative (`do-release-upgrade` on the VM) you would also set `lifecycle { ignore_changes = [source_image_reference] }` on the VM, which this template does not do: a rebuilt VM is what the pipeline knows how to configure from nothing.
+
 ## Limits
 - One production environment per repository; the callers use the environment named `production`.
 - The Terraform plan of pull requests (`pr-validation.yml`) belongs to this repository's own checks; your repository has no Terraform, so there is nothing to plan there. The terraform rollback's preview mode shows a plan on demand.

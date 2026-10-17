@@ -49,6 +49,22 @@ variable "vm_size" {
   default     = "Standard_B1s"
 }
 
+variable "vm_image" {
+  description = "Marketplace image of the VM's OS disk. Changing it REPLACES the VM (a new OS disk): the deploy workflow snapshots the old disk first. The default is Ubuntu 24.04 LTS (supported until 2029); Ubuntu 22.04 LTS is offer 0001-com-ubuntu-server-jammy, sku 22_04-lts-gen2."
+  type = object({
+    publisher = string
+    offer     = string
+    sku       = string
+    version   = string
+  })
+  default = {
+    publisher = "Canonical"
+    offer     = "ubuntu-24_04-lts"
+    sku       = "server"
+    version   = "latest"
+  }
+}
+
 variable "vm_admin_username" {
   description = "Admin username configured on the Linux VM."
   type        = string

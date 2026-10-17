@@ -11,7 +11,7 @@ Everything lives in a single resource group whose name is derived from `environm
 | Module | Resources |
 | --- | --- |
 | **network** | /16 virtual network with one VM subnet, NSG (HTTP/HTTPS open, SSH limited to `allowed_admin_cidrs`), a static Standard-SKU public IP, and the VM NIC. |
-| **compute** | Ubuntu 22.04 LTS VM with a 64 GB Premium SSD OS disk, SSH-key auth only, and a **system-assigned managed identity**. |
+| **compute** | Ubuntu 24.04 LTS VM (`vm_image`, changeable; see *Upgrading the VM's operating system* in [USING.md](USING.md)) with a 64 GB Premium SSD OS disk, SSH-key auth only, and a **system-assigned managed identity**. |
 | **database** | PostgreSQL Flexible Server (Burstable B1ms, 32 GB, auto-grow off by default to stay in the free tier) and the default `postgres` database. The endpoint is public but **firewalled to the VM's static public IP only**. |
 | **storage** | Optional Azure Storage Account for blobs (`blob_storage_enabled`), Standard LRS, TLS 1.2 only, public access disabled, with **blob versioning and 7-day soft delete** for recoverability. |
 | **automation** | Azure Automation account + runbooks, created only when at least one automation feature is enabled (VM start/stop schedules, ad-hoc snapshots, snapshot cleanup, on-demand PostgreSQL backups). |
