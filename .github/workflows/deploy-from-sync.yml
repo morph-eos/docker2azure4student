@@ -12,14 +12,17 @@ on:
         type: string
 
 permissions:
-  contents: write
-  id-token: write
-  actions: write
+  contents: read
 
 jobs:
   deploy:
+    # Inert in a copy that has no Azure settings (the public template).
+    if: ${{ vars.AZURE_CLIENT_ID != '' }}
     runs-on: ubuntu-latest
     environment: production
+    permissions:
+      contents: read
+      id-token: write
     outputs:
       sync_branch: ${{ steps.sync-branch.outputs.value }}
       image_tag: ${{ steps.manifest.outputs.image_tag }}
@@ -430,11 +433,16 @@ jobs:
         working-directory: ${{ env.TERRAFORM_WORKING_DIR }}
         run: terraform plan -input=false -out=tfplan
 
+      # The binary plan holds the values in clear (secrets included); the text form masks them.
+      - name: Render the plan as text
+        working-directory: ${{ env.TERRAFORM_WORKING_DIR }}
+        run: terraform show -no-color tfplan > plan.txt
+
       - name: Upload deploy plan
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: deploy-plan-${{ github.run_id }}
-          path: ${{ env.TERRAFORM_WORKING_DIR }}/tfplan
+          path: ${{ env.TERRAFORM_WORKING_DIR }}/plan.txt
           retention-days: 30
 
       - name: Terraform apply
@@ -615,8 +623,19 @@ jobs:
       - name: Trust VM host key
         env:
           VM_IP: ${{ steps.tf-outputs.outputs.vm_ip }}
+          VM_HOST_KEY: ${{ vars.VM_HOST_KEY }}
         run: |
           set -euo pipefail
+          # With the repository variable VM_HOST_KEY (one line: `ssh-keyscan -t ed25519 <ip>` taken once from a trusted network) the VM is checked
+          # against that key; without it the key is taken on the spot, as before.
+          if [[ -n "$VM_HOST_KEY" ]]; then
+            mkdir -p ~/.ssh
+            printf '%s\n' "$VM_HOST_KEY" | sed "s/^[^ ]* /$VM_IP /" >> ~/.ssh/known_hosts
+            echo "SSH_STRICT=yes" >> "$GITHUB_ENV"
+            echo "Pinned host key in use."
+            exit 0
+          fi
+          echo "SSH_STRICT=no" >> "$GITHUB_ENV"
           echo "Attempting to fetch SSH host key for $VM_IP"
           for attempt in {1..5}; do
             if ssh-keyscan -H "$VM_IP" >> ~/.ssh/known_hosts 2>/dev/null; then
@@ -632,7 +651,7 @@ jobs:
         env:
           VM_IP: ${{ steps.tf-outputs.outputs.vm_ip }}
         run: |
-          ssh -T -o StrictHostKeyChecking=no ${VM_SSH_USERNAME}@${VM_IP} 'bash -s' <<'EOF'
+          ssh -T -o StrictHostKeyChecking=${SSH_STRICT:-no} ${VM_SSH_USERNAME}@${VM_IP} 'bash -s' <<'EOF'
             set -euo pipefail
             if command -v docker >/dev/null 2>&1; then
               exit 0
@@ -658,7 +677,7 @@ jobs:
           set -euo pipefail
           KV_HOST="$(terraform output -raw key_vault_name).vault.azure.net"
           APP_USER="$VM_SSH_USERNAME"
-          ssh -o StrictHostKeyChecking=no "$APP_USER@${VM_IP}" "KV_HOST='$KV_HOST' APP_USER='$APP_USER' bash -s" <<'EOF'
+          ssh -o StrictHostKeyChecking=${SSH_STRICT:-no} "$APP_USER@${VM_IP}" "KV_HOST='$KV_HOST' APP_USER='$APP_USER' bash -s" <<'EOF'
             set -uo pipefail
             ENV_FILE="/home/$APP_USER/app.env"
             TOKEN=$(curl -s -H 'Metadata: true' "http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01&resource=https://vault.azure.net" | python3 -c 'import sys,json;print(json.load(sys.stdin)["access_token"])' 2>/dev/null || true)
@@ -681,15 +700,15 @@ jobs:
         env:
           VM_IP: ${{ steps.tf-outputs.outputs.vm_ip }}
         run: |
-          ssh -o StrictHostKeyChecking=no ${VM_SSH_USERNAME}@${VM_IP} 'echo "--- memory before ---"; free -m'
-          ssh -o StrictHostKeyChecking=no ${VM_SSH_USERNAME}@${VM_IP} 'sudo bash -s' < scripts/vm-prepare-host.sh
+          ssh -o StrictHostKeyChecking=${SSH_STRICT:-no} ${VM_SSH_USERNAME}@${VM_IP} 'echo "--- memory before ---"; free -m'
+          ssh -o StrictHostKeyChecking=${SSH_STRICT:-no} ${VM_SSH_USERNAME}@${VM_IP} 'sudo bash -s' < scripts/vm-prepare-host.sh
 
       - name: Deploy container on VM
         env:
           IMAGE_URI: ${{ steps.build-push.outputs.image_uri }}
           VM_IP: ${{ steps.tf-outputs.outputs.vm_ip }}
         run: |
-          ssh -o StrictHostKeyChecking=no ${VM_SSH_USERNAME}@${VM_IP} "
+          ssh -o StrictHostKeyChecking=${SSH_STRICT:-no} ${VM_SSH_USERNAME}@${VM_IP} "
             set -euo pipefail
             sudo mkdir -p /etc/letsencrypt
             sudo docker login ${REGISTRY_LOGIN_SERVER} -u '${CONTAINER_REGISTRY_USERNAME}' -p '${CONTAINER_REGISTRY_PASSWORD}'
@@ -746,14 +765,15 @@ jobs:
     if: always()
     permissions:
       contents: write
-      actions: write
     steps:
       - name: Delete sync branch
         if: ${{ startsWith(needs.deploy.outputs.sync_branch, 'sync/') }}
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+        env:
+          SYNC_BRANCH: ${{ needs.deploy.outputs.sync_branch }}
         with:
           script: |
-            const branch = '${{ needs.deploy.outputs.sync_branch }}';
+            const branch = process.env.SYNC_BRANCH;
             try {
               await github.rest.git.deleteRef({
                 owner: context.repo.owner,

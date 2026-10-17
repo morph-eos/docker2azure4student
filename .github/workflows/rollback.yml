@@ -55,7 +55,7 @@ env:
 
 jobs:
   rollback-container:
-    if: ${{ inputs.target == 'container' }}
+    if: ${{ inputs.target == 'container' && vars.AZURE_CLIENT_ID != '' }}
     runs-on: ubuntu-latest
     environment: production
     concurrency:
@@ -186,8 +186,16 @@ jobs:
         if: ${{ inputs.apply }}
         env:
           VM_IP: ${{ steps.resolve.outputs.vm_ip }}
+          VM_HOST_KEY: ${{ vars.VM_HOST_KEY }}
         run: |
           set -euo pipefail
+          if [[ -n "$VM_HOST_KEY" ]]; then
+            mkdir -p ~/.ssh
+            printf '%s\n' "$VM_HOST_KEY" | sed "s/^[^ ]* /$VM_IP /" >> ~/.ssh/known_hosts
+            echo "SSH_STRICT=yes" >> "$GITHUB_ENV"
+            exit 0
+          fi
+          echo "SSH_STRICT=no" >> "$GITHUB_ENV"
           for attempt in {1..5}; do
             if ssh-keyscan -H "$VM_IP" >> ~/.ssh/known_hosts 2>/dev/null; then
               exit 0
@@ -209,7 +217,7 @@ jobs:
           set -euo pipefail
           # Reuse the app.env already present on the VM (written by the last deploy
           # from Key Vault). Rollback swaps the image, not the configuration.
-          ssh -o StrictHostKeyChecking=no "${VM_SSH_USERNAME}@${VM_IP}" "
+          ssh -o StrictHostKeyChecking=${SSH_STRICT:-no} "${VM_SSH_USERNAME}@${VM_IP}" "
             set -euo pipefail
             if [ ! -f /home/${VM_SSH_USERNAME}/app.env ]; then
               echo 'No app.env on the VM; cannot roll back safely' >&2; exit 1
@@ -246,7 +254,7 @@ jobs:
             --only-show-errors --output none
 
   rollback-terraform:
-    if: ${{ inputs.target == 'terraform' }}
+    if: ${{ inputs.target == 'terraform' && vars.AZURE_CLIENT_ID != '' }}
     runs-on: ubuntu-latest
     environment: production
     concurrency:
@@ -332,11 +340,15 @@ jobs:
         working-directory: ${{ env.TERRAFORM_WORKING_DIR }}
         run: terraform plan -input=false -out=tfplan
 
+      - name: Render the plan as text
+        working-directory: ${{ env.TERRAFORM_WORKING_DIR }}
+        run: terraform show -no-color tfplan > plan.txt
+
       - name: Upload rollback plan
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: rollback-plan-${{ github.run_id }}
-          path: ${{ env.TERRAFORM_WORKING_DIR }}/tfplan
+          path: ${{ env.TERRAFORM_WORKING_DIR }}/plan.txt
           retention-days: 30
 
       - name: Preview only (apply is off)

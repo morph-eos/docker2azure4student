@@ -7,3 +7,12 @@ updates:
     groups:
       actions-minor-patch:
         update-types: [minor, patch]
+  - package-ecosystem: terraform
+    directories:
+      - /
+      - /modules/*
+    schedule:
+      interval: weekly
+    groups:
+      terraform-minor-patch:
+        update-types: [minor, patch]
