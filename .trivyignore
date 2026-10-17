@@ -1,6 +1,6 @@
 # Accepted security risks (documented baseline). The gate still fails on any
-# NEW finding; these specific ones are intentional for this project. Real
-# hardening is tracked in issue #2 (infrastructure hardening).
+# NEW finding; these specific ones are intentional for this project. Each
+# entry says why; the ones marked as candidates are hardening still to do.
 
 # Public web application: HTTP/HTTPS must be reachable from the internet.
 AZU-0047
@@ -13,6 +13,6 @@ AVD-AZU-0051
 
 # Key Vault is protected by Entra ID auth + access policies. A default-deny
 # network ACL would break CI (dynamic GitHub runner IPs) and the VM read path.
-# Candidate for hardening (service endpoints / trusted services) in issue #2.
+# Candidate for hardening (service endpoints / trusted services).
 AZU-0013
 AVD-AZU-0013
