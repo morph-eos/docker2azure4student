@@ -1,0 +1,32 @@
+# Copy to .github/workflows/deploy-from-sync.yml of YOUR private repository. Nothing else of the template is needed there.
+name: Deploy from sync bundle
+
+on:
+  push:
+    branches: ['sync/**']
+  workflow_dispatch:
+    inputs:
+      sync_branch:
+        description: 'sync/<run-id>-<sha> branch to deploy'
+        required: true
+        type: string
+
+permissions: {}
+
+jobs:
+  deploy:
+    permissions:
+      contents: write   # the template's cleanup job deletes the sync branch afterwards
+      id-token: write   # Azure sign-in by OIDC
+    # The version of the template is the part after @: a release tag (v1), or a commit SHA to freeze it.
+    uses: morph-eos/docker2azure4student/.github/workflows/deploy-from-sync.yml@v1
+    secrets:
+      TFVARS_B64: ${{ secrets.TFVARS_B64 }}
+      IMAGE_REGISTRY: ${{ secrets.IMAGE_REGISTRY }}
+      IMAGE_NAME: ${{ secrets.IMAGE_NAME }}
+      REGISTRY_LOGIN_SERVER: ${{ secrets.REGISTRY_LOGIN_SERVER }}
+      CONTAINER_REGISTRY_USERNAME: ${{ secrets.CONTAINER_REGISTRY_USERNAME }}
+      CONTAINER_REGISTRY_PASSWORD: ${{ secrets.CONTAINER_REGISTRY_PASSWORD }}
+      VM_SSH_USERNAME: ${{ secrets.VM_SSH_USERNAME }}
+      VM_SSH_KEY: ${{ secrets.VM_SSH_KEY }}
+      APP_ENV_VARS_B64: ${{ secrets.APP_ENV_VARS_B64 }}

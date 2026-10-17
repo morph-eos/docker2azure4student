@@ -17,28 +17,44 @@ name: Rollback deployment
 #                   The remote state account has versioning + soft delete as the
 #                   safety net.
 
+# A REUSABLE workflow (examples/caller-rollback.yml): the inputs are those of the caller's manual run. The Terraform comes from the template, at the version of this file
+# (the terraform rollback: at git_ref, a tag or commit of the template).
 on:
-  workflow_dispatch:
+  workflow_call:
     inputs:
       target:
-        description: 'What to roll back'
-        type: choice
-        options:
-          - container
-          - terraform
+        description: 'What to roll back: container or terraform'
+        type: string
         required: true
       image_tag:
-        description: '(container) image tag to roll back to; leave empty to use app-image-previous from Key Vault'
+        description: '(container) image tag to roll back to; empty uses app-image-previous from Key Vault'
         type: string
         required: false
       git_ref:
-        description: '(terraform) git SHA/tag/branch holding the known-good infra code'
+        description: '(terraform) tag, branch or commit of the TEMPLATE holding the known-good infra code'
         type: string
         required: false
       apply:
-        description: 'Apply for real? Leave off to preview only (resolve tag / terraform plan).'
+        description: 'Apply for real? Off previews only (resolve the tag / terraform plan).'
         type: boolean
         default: false
+    secrets:
+      TFVARS_B64:
+        required: false
+      IMAGE_REGISTRY:
+        required: false
+      IMAGE_NAME:
+        required: false
+      REGISTRY_LOGIN_SERVER:
+        required: false
+      CONTAINER_REGISTRY_USERNAME:
+        required: false
+      CONTAINER_REGISTRY_PASSWORD:
+        required: false
+      VM_SSH_USERNAME:
+        required: false
+      VM_SSH_KEY:
+        required: false
 
 permissions:
   contents: read
@@ -62,8 +78,25 @@ jobs:
       group: deploy-${{ github.repository }}
       cancel-in-progress: false
     steps:
-      - name: Checkout
+      - name: Resolve the template version (the commit of this workflow file)
+        id: template
+        run: |
+          python3 - <<'P' >> "$GITHUB_OUTPUT"
+          import base64, json, os, urllib.request
+          req = urllib.request.Request(os.environ["ACTIONS_ID_TOKEN_REQUEST_URL"] + "&audience=template-version",
+                                       headers={"Authorization": "bearer " + os.environ["ACTIONS_ID_TOKEN_REQUEST_TOKEN"]})
+          part = json.load(urllib.request.urlopen(req))["value"].split(".")[1]
+          claims = json.loads(base64.urlsafe_b64decode(part + "=" * (-len(part) % 4)))
+          print("repository=" + claims["job_workflow_ref"].split("/.github/workflows/")[0])
+          print("sha=" + claims["job_workflow_sha"])
+          P
+
+      - name: Checkout the template at that version
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: ${{ steps.template.outputs.repository }}
+          ref: ${{ steps.template.outputs.sha }}
+          persist-credentials: false
 
       - name: Restore terraform.tfvars from secret
         env:
@@ -275,10 +308,26 @@ jobs:
             exit 1
           fi
 
-      - name: Checkout
+      - name: Resolve the template version (the commit of this workflow file)
+        id: template
+        run: |
+          python3 - <<'P' >> "$GITHUB_OUTPUT"
+          import base64, json, os, urllib.request
+          req = urllib.request.Request(os.environ["ACTIONS_ID_TOKEN_REQUEST_URL"] + "&audience=template-version",
+                                       headers={"Authorization": "bearer " + os.environ["ACTIONS_ID_TOKEN_REQUEST_TOKEN"]})
+          part = json.load(urllib.request.urlopen(req))["value"].split(".")[1]
+          claims = json.loads(base64.urlsafe_b64decode(part + "=" * (-len(part) % 4)))
+          print("repository=" + claims["job_workflow_ref"].split("/.github/workflows/")[0])
+          print("sha=" + claims["job_workflow_sha"])
+          P
+
+      - name: Checkout the template (all its history, to reach git_ref)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          repository: ${{ steps.template.outputs.repository }}
+          ref: ${{ steps.template.outputs.sha }}
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Check out known-good ref
         env:
