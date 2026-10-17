@@ -222,8 +222,9 @@ Refer to `AUTOMATION.md` for the full automation playbook, including required se
 
 The workflows assume these; the template cannot set them for you.
 
-- **Ruleset on `main`**: pull request required, the `validate` and `trivy` checks required, no bypass actor.
-- **Environment `production`**: required reviewer (you), deployments only from `sync/**`; the deployment secrets belong to the environment, not to the repository.
+- **Ruleset on `main`**: pull request required, the `validate` and `trivy` checks required, no bypass actor. (A private repository needs GitHub Pro for rulesets; an organization on the free plan has none, and the points below that depend on one are then the open risk.)
+- **Who may create `sync/**` branches**: a second ruleset on `refs/heads/sync/**` with the rules *creation*, *update* and *non fast forward*, and the deploy bot (its GitHub App) as the only bypass actor. Together with the repository variable `DEPLOY_PUSH_ACTOR` (the bot's login, `<app-slug>[bot]`: a push to `sync/**` by anyone else does not deploy) this decides who can start a deployment by push. Required reviewers on the environment would do it with a click, but GitHub offers them on private repositories only on paid team plans.
+- **Environment `production`**: deployments only from `main` and `sync/**`; the deployment secrets belong to the environment, not to the repository, so a workflow on any other branch cannot read them.
 - **Azure**: the federated credential of the deploy identity is bound to the environment (`...:environment:production`); a second, read-only identity (`AZURE_PLAN_CLIENT_ID`) serves pull requests.
-- **Who may deploy by push**: set the repository variable `DEPLOY_PUSH_ACTOR` to the deploy bot's login (`<app-slug>[bot]`); a push to `sync/**` by anyone else does not deploy.
 - **SSH**: set the repository variable `VM_HOST_KEY` to the VM's host key line (`ssh-keyscan -t ed25519 <ip>` from a trusted network, once); the workflows then check the VM against it. Update it when the VM is recreated.
+- **Dependabot**: it runs in this public repository only. In a private copy delete `.github/dependabot.yml` (otherwise every copy opens the same pull requests) and take the updates by merging `upstream`.

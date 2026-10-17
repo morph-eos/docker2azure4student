@@ -16,3 +16,7 @@ updates:
     groups:
       terraform-minor-patch:
         update-types: [minor, patch]
+    ignore:
+      # A major of the provider is a reviewed change (a plan against the real state), not an automatic pull request.
+      - dependency-name: hashicorp/azurerm
+        update-types: ["version-update:semver-major"]
