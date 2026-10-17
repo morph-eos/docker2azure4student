@@ -33,7 +33,7 @@ resource "azurerm_monitor_diagnostic_setting" "postgres" {
     category_group = "allLogs"
   }
 
-  metric {
+  enabled_metric {
     category = "AllMetrics"
   }
 }
@@ -47,7 +47,7 @@ resource "azurerm_monitor_diagnostic_setting" "keyvault" {
     category_group = "audit"
   }
 
-  metric {
+  enabled_metric {
     category = "AllMetrics"
   }
 }
