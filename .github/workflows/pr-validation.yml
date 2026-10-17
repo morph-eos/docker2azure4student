@@ -26,15 +26,16 @@ jobs:
           terraform validate -no-color | tee validate.txt
 
       - name: Azure login
-        if: ${{ vars.AZURE_CLIENT_ID != '' }}
+        if: ${{ vars.AZURE_PLAN_CLIENT_ID != '' || vars.AZURE_CLIENT_ID != '' }}
         uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3
         with:
-          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          # A read-only identity for the plan (AZURE_PLAN_CLIENT_ID), so a pull request never holds the deploy identity.
+          client-id: ${{ vars.AZURE_PLAN_CLIENT_ID || vars.AZURE_CLIENT_ID }}
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
       - name: Terraform plan
-        if: ${{ vars.AZURE_CLIENT_ID != '' }}
+        if: ${{ vars.AZURE_PLAN_CLIENT_ID != '' || vars.AZURE_CLIENT_ID != '' }}
         run: |
           set -euo pipefail
           echo "$TFVARS_B64" | base64 -d > terraform.tfvars
@@ -55,7 +56,7 @@ jobs:
             -backend-config=storage_account_name="$SA" \
             -backend-config=container_name=tfstate \
             -backend-config=key=docker2azure.tfstate
-          terraform plan -input=false -no-color -out=tfplan | tee plan.txt
+          terraform plan -input=false -no-color | tee plan.txt
 
       - name: Upload artifacts
         if: always()
@@ -65,5 +66,4 @@ jobs:
           path: |
             validate.txt
             plan.txt
-            tfplan
           if-no-files-found: ignore
