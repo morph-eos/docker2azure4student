@@ -5,6 +5,7 @@ tenant_id            = "00000000-0000-0000-0000-000000000000"
 environment_name     = "student-app"
 location             = "francecentral"
 vm_size              = "Standard_B1s"
+# vm_image = { publisher = "Canonical", offer = "0001-com-ubuntu-server-jammy", sku = "22_04-lts-gen2", version = "latest" }   # stay on Ubuntu 22.04 (the default is 24.04; changing it replaces the VM)
 vm_admin_username    = "azureuser"
 admin_ssh_public_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAISAMPLEKEY user@example"
 automation_location  = "eastus"

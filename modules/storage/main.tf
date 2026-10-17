@@ -21,6 +21,8 @@ resource "azurerm_storage_account" "blob" {
   min_tls_version                 = "TLS1_2"
   https_traffic_only_enabled      = true
   allow_nested_items_to_be_public = false
+  # The provider default became false in azurerm 4; stated so that it does not depend on the provider.
+  cross_tenant_replication_enabled = false
 
   # Recoverability: keep blob versions and let deleted blobs/containers be
   # restored within the retention window (mirrors the Terraform state storage).

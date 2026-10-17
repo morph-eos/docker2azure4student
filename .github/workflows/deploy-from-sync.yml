@@ -485,6 +485,22 @@ jobs:
           path: ${{ env.TERRAFORM_WORKING_DIR }}/plan.txt
           retention-days: 30
 
+      # A plan that replaces the VM (a new OS image, for example) destroys its OS disk: keep a snapshot of it first.
+      - name: Snapshot the OS disk if the plan replaces the VM
+        working-directory: ${{ env.TERRAFORM_WORKING_DIR }}
+        run: |
+          set -euo pipefail
+          TARGET="$(terraform show -json tfplan | jq -r '[.resource_changes[] | select(.type=="azurerm_linux_virtual_machine" and (.change.actions | index("delete"))) | "\(.change.before.resource_group_name) \(.change.before.name)"] | first // empty')"
+          if [[ -z "$TARGET" ]]; then
+            echo "The plan does not replace the VM."
+            exit 0
+          fi
+          read -r RG VM <<< "$TARGET"
+          DISK_ID="$(az vm show -g "$RG" -n "$VM" --query storageProfile.osDisk.managedDisk.id -o tsv)"
+          SNAP="${VM}-osdisk-before-replace-${GITHUB_RUN_ID}"
+          az snapshot create -g "$RG" -n "$SNAP" --source "$DISK_ID" --only-show-errors -o none
+          echo "::notice::The plan replaces $VM. Its old OS disk is kept as the snapshot $SNAP in $RG; delete it once the new VM is verified: az snapshot delete -g $RG -n $SNAP"
+
       - name: Terraform apply
         working-directory: ${{ env.TERRAFORM_WORKING_DIR }}
         run: terraform apply -input=false tfplan
@@ -660,6 +676,21 @@ jobs:
         with:
           ssh-private-key: ${{ env.VM_SSH_KEY }}
 
+      # A VM that has just been created needs a while before sshd answers.
+      - name: Wait for the VM to accept SSH
+        env:
+          VM_IP: ${{ steps.tf-outputs.outputs.vm_ip }}
+        run: |
+          for attempt in {1..40}; do
+            if timeout 5 bash -c "exec 3<>/dev/tcp/${VM_IP}/22" 2>/dev/null; then
+              echo "SSH port open after $attempt attempt(s)."
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "The VM did not answer on port 22 within about 7 minutes." >&2
+          exit 1
+
       - name: Trust VM host key
         env:
           VM_IP: ${{ steps.tf-outputs.outputs.vm_ip }}
@@ -698,15 +729,18 @@ jobs:
             fi
             echo 'Docker not found; installing...'
             export DEBIAN_FRONTEND=noninteractive
-            sudo apt-get update
-            sudo apt-get install -y ca-certificates curl gnupg lsb-release
+            # On a new VM cloud-init and the first updates hold the package lock for a while.
+            sudo cloud-init status --wait >/dev/null 2>&1 || true
+            APT="sudo apt-get -o DPkg::Lock::Timeout=300"
+            $APT update
+            $APT install -y ca-certificates curl gnupg lsb-release
             sudo install -m 0755 -d /etc/apt/keyrings
             if [[ ! -f /etc/apt/keyrings/docker.gpg ]]; then
               curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
             fi
             echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo $VERSION_CODENAME) stable" | sudo tee /etc/apt/sources.list.d/docker.list >/dev/null
-            sudo apt-get update
-            sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+            $APT update
+            $APT install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
           EOF
 
       - name: Load env on VM from Key Vault

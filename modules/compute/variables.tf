@@ -24,6 +24,16 @@ variable "vm_size" {
   type        = string
 }
 
+variable "vm_image" {
+  description = "Marketplace image of the OS disk (publisher, offer, sku, version)."
+  type = object({
+    publisher = string
+    offer     = string
+    sku       = string
+    version   = string
+  })
+}
+
 variable "vm_admin_username" {
   description = "Admin username configured on the Linux VM."
   type        = string
