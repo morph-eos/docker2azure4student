@@ -66,12 +66,14 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Restore terraform.tfvars from secret
+        env:
+          TFVARS_B64: ${{ secrets.TFVARS_B64 }}
         run: |
-          if [[ -z "${{ secrets.TFVARS_B64 }}" ]]; then
+          if [[ -z "${TFVARS_B64:-}" ]]; then
             echo "Missing TFVARS_B64 secret" >&2
             exit 1
           fi
-          echo "${{ secrets.TFVARS_B64 }}" | base64 -d > terraform.tfvars
+          printf '%s' "$TFVARS_B64" | base64 -d > terraform.tfvars
 
       - name: Azure login
         uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3
@@ -252,9 +254,16 @@ jobs:
       cancel-in-progress: false
     steps:
       - name: Validate inputs
+        # The ref reaches the scripts as an environment variable, never pasted into their text.
+        env:
+          GIT_REF: ${{ inputs.git_ref }}
         run: |
-          if [[ -z "${{ inputs.git_ref }}" ]]; then
+          if [[ -z "$GIT_REF" ]]; then
             echo "git_ref is required for a terraform rollback (the known-good SHA/tag/branch)." >&2
+            exit 1
+          fi
+          if [[ ! "$GIT_REF" =~ ^[A-Za-z0-9_][A-Za-z0-9._/-]{0,99}$ ]]; then
+            echo "git_ref may hold only letters, digits and . _ / -" >&2
             exit 1
           fi
 
@@ -264,20 +273,24 @@ jobs:
           fetch-depth: 0
 
       - name: Check out known-good ref
+        env:
+          GIT_REF: ${{ inputs.git_ref }}
         run: |
           set -euo pipefail
           # Resolve branch, tag, full or short SHA (actions/checkout's `ref` does
           # not accept a short SHA, so we resolve it here against full history).
-          git checkout "${{ inputs.git_ref }}"
+          git checkout --end-of-options "$GIT_REF"
           echo "Rolling infra back to $(git rev-parse --short HEAD): $(git log -1 --pretty=%s)"
 
       - name: Restore terraform.tfvars from secret
+        env:
+          TFVARS_B64: ${{ secrets.TFVARS_B64 }}
         run: |
-          if [[ -z "${{ secrets.TFVARS_B64 }}" ]]; then
+          if [[ -z "${TFVARS_B64:-}" ]]; then
             echo "Missing TFVARS_B64 secret" >&2
             exit 1
           fi
-          echo "${{ secrets.TFVARS_B64 }}" | base64 -d > terraform.tfvars
+          printf '%s' "$TFVARS_B64" | base64 -d > terraform.tfvars
 
       - name: Azure login
         uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3
@@ -328,8 +341,10 @@ jobs:
 
       - name: Preview only (apply is off)
         if: ${{ !inputs.apply }}
+        env:
+          GIT_REF: ${{ inputs.git_ref }}
         run: |
-          echo "Preview mode: reviewed the plan above for rollback to '${{ inputs.git_ref }}'."
+          echo "Preview mode: reviewed the plan above for rollback to '$GIT_REF'."
           echo "Re-run with 'apply' enabled to apply this plan."
 
       - name: Terraform apply

@@ -45,15 +45,23 @@ jobs:
     steps:
       - name: Determine sync branch
         id: sync-branch
+        # Inputs reach the script as environment variables, never pasted into its text, and the name must be a sync/ branch.
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_BRANCH: ${{ github.event.inputs.sync_branch }}
         run: |
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            if [[ -z "${{ github.event.inputs.sync_branch }}" ]]; then
+          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            if [[ -z "$INPUT_BRANCH" ]]; then
               echo "sync_branch input is required" >&2
               exit 1
             fi
-            BRANCH="${{ github.event.inputs.sync_branch }}"
+            BRANCH="$INPUT_BRANCH"
           else
             BRANCH="${GITHUB_REF#refs/heads/}"
+          fi
+          if [[ ! "$BRANCH" =~ ^sync/[A-Za-z0-9._-]+$ ]]; then
+            echo "not a sync/<name> branch" >&2
+            exit 1
           fi
           echo "value=$BRANCH" >> "$GITHUB_OUTPUT"
 
@@ -64,15 +72,26 @@ jobs:
           fetch-depth: 0
 
       - name: Restore terraform.tfvars from secret
+        env:
+          TFVARS_B64: ${{ secrets.TFVARS_B64 }}
         run: |
-          if [[ -z "${{ secrets.TFVARS_B64 }}" ]]; then
+          if [[ -z "${TFVARS_B64:-}" ]]; then
             echo "Missing TFVARS_B64 secret" >&2
             exit 1
           fi
-          echo "${{ secrets.TFVARS_B64 }}" | base64 -d > terraform.tfvars
+          printf '%s' "$TFVARS_B64" | base64 -d > terraform.tfvars
 
       - name: Load deployment secrets
         id: load-secrets
+        env:
+          IMAGE_REGISTRY: ${{ secrets.IMAGE_REGISTRY }}
+          IMAGE_NAME: ${{ secrets.IMAGE_NAME }}
+          REGISTRY_LOGIN_SERVER: ${{ secrets.REGISTRY_LOGIN_SERVER }}
+          CONTAINER_REGISTRY_USERNAME: ${{ secrets.CONTAINER_REGISTRY_USERNAME }}
+          CONTAINER_REGISTRY_PASSWORD: ${{ secrets.CONTAINER_REGISTRY_PASSWORD }}
+          VM_SSH_USERNAME: ${{ secrets.VM_SSH_USERNAME }}
+          VM_SSH_KEY: ${{ secrets.VM_SSH_KEY }}
+          APP_ENV_VARS_B64: ${{ secrets.APP_ENV_VARS_B64 }}
         run: |
           set -euo pipefail
           missing=0
@@ -95,14 +114,14 @@ jobs:
             fi
           }
 
-          append_var IMAGE_REGISTRY "${{ secrets.IMAGE_REGISTRY }}" IMAGE_REGISTRY
-          append_var IMAGE_NAME "${{ secrets.IMAGE_NAME }}" IMAGE_NAME
-          append_var REGISTRY_LOGIN_SERVER "${{ secrets.REGISTRY_LOGIN_SERVER }}" REGISTRY_LOGIN_SERVER
-          append_var CONTAINER_REGISTRY_USERNAME "${{ secrets.CONTAINER_REGISTRY_USERNAME }}" CONTAINER_REGISTRY_USERNAME
-          append_var CONTAINER_REGISTRY_PASSWORD "${{ secrets.CONTAINER_REGISTRY_PASSWORD }}" CONTAINER_REGISTRY_PASSWORD
-          append_var VM_SSH_USERNAME "${{ secrets.VM_SSH_USERNAME }}" VM_SSH_USERNAME
-          append_var VM_SSH_KEY "${{ secrets.VM_SSH_KEY }}" VM_SSH_KEY
-          append_var APP_ENV_VARS_B64 "${{ secrets.APP_ENV_VARS_B64 }}" APP_ENV_VARS_B64 false
+          append_var IMAGE_REGISTRY "${IMAGE_REGISTRY:-}" IMAGE_REGISTRY
+          append_var IMAGE_NAME "${IMAGE_NAME:-}" IMAGE_NAME
+          append_var REGISTRY_LOGIN_SERVER "${REGISTRY_LOGIN_SERVER:-}" REGISTRY_LOGIN_SERVER
+          append_var CONTAINER_REGISTRY_USERNAME "${CONTAINER_REGISTRY_USERNAME:-}" CONTAINER_REGISTRY_USERNAME
+          append_var CONTAINER_REGISTRY_PASSWORD "${CONTAINER_REGISTRY_PASSWORD:-}" CONTAINER_REGISTRY_PASSWORD
+          append_var VM_SSH_USERNAME "${VM_SSH_USERNAME:-}" VM_SSH_USERNAME
+          append_var VM_SSH_KEY "${VM_SSH_KEY:-}" VM_SSH_KEY
+          append_var APP_ENV_VARS_B64 "${APP_ENV_VARS_B64:-}" APP_ENV_VARS_B64 false
 
           if [[ $missing -ne 0 ]]; then
             exit 1
@@ -594,9 +613,10 @@ jobs:
           ssh-private-key: ${{ env.VM_SSH_KEY }}
 
       - name: Trust VM host key
+        env:
+          VM_IP: ${{ steps.tf-outputs.outputs.vm_ip }}
         run: |
           set -euo pipefail
-          VM_IP="${{ steps.tf-outputs.outputs.vm_ip }}"
           echo "Attempting to fetch SSH host key for $VM_IP"
           for attempt in {1..5}; do
             if ssh-keyscan -H "$VM_IP" >> ~/.ssh/known_hosts 2>/dev/null; then
@@ -612,7 +632,7 @@ jobs:
         env:
           VM_IP: ${{ steps.tf-outputs.outputs.vm_ip }}
         run: |
-          ssh -T -o StrictHostKeyChecking=no ${{ env.VM_SSH_USERNAME }}@${VM_IP} 'bash -s' <<'EOF'
+          ssh -T -o StrictHostKeyChecking=no ${VM_SSH_USERNAME}@${VM_IP} 'bash -s' <<'EOF'
             set -euo pipefail
             if command -v docker >/dev/null 2>&1; then
               exit 0
@@ -637,7 +657,7 @@ jobs:
         run: |
           set -euo pipefail
           KV_HOST="$(terraform output -raw key_vault_name).vault.azure.net"
-          APP_USER='${{ env.VM_SSH_USERNAME }}'
+          APP_USER="$VM_SSH_USERNAME"
           ssh -o StrictHostKeyChecking=no "$APP_USER@${VM_IP}" "KV_HOST='$KV_HOST' APP_USER='$APP_USER' bash -s" <<'EOF'
             set -uo pipefail
             ENV_FILE="/home/$APP_USER/app.env"
@@ -661,15 +681,15 @@ jobs:
         env:
           VM_IP: ${{ steps.tf-outputs.outputs.vm_ip }}
         run: |
-          ssh -o StrictHostKeyChecking=no ${{ env.VM_SSH_USERNAME }}@${VM_IP} 'echo "--- memory before ---"; free -m'
-          ssh -o StrictHostKeyChecking=no ${{ env.VM_SSH_USERNAME }}@${VM_IP} 'sudo bash -s' < scripts/vm-prepare-host.sh
+          ssh -o StrictHostKeyChecking=no ${VM_SSH_USERNAME}@${VM_IP} 'echo "--- memory before ---"; free -m'
+          ssh -o StrictHostKeyChecking=no ${VM_SSH_USERNAME}@${VM_IP} 'sudo bash -s' < scripts/vm-prepare-host.sh
 
       - name: Deploy container on VM
         env:
           IMAGE_URI: ${{ steps.build-push.outputs.image_uri }}
           VM_IP: ${{ steps.tf-outputs.outputs.vm_ip }}
         run: |
-          ssh -o StrictHostKeyChecking=no ${{ env.VM_SSH_USERNAME }}@${VM_IP} "
+          ssh -o StrictHostKeyChecking=no ${VM_SSH_USERNAME}@${VM_IP} "
             set -euo pipefail
             sudo mkdir -p /etc/letsencrypt
             sudo docker login ${REGISTRY_LOGIN_SERVER} -u '${CONTAINER_REGISTRY_USERNAME}' -p '${CONTAINER_REGISTRY_PASSWORD}'
@@ -688,7 +708,7 @@ jobs:
             fi
             sudo docker stop ${CONTAINER_SERVICE_NAME} || true
             sudo docker rm ${CONTAINER_SERVICE_NAME} || true
-            sudo docker run -d --name ${CONTAINER_SERVICE_NAME} --env-file /home/${{ env.VM_SSH_USERNAME }}/app.env -p ${CONTAINER_HTTP_PORT}:${CONTAINER_INTERNAL_HTTP_PORT} -p ${CONTAINER_HTTPS_PORT}:${CONTAINER_INTERNAL_HTTPS_PORT} -v /etc/letsencrypt:/etc/letsencrypt --log-driver journald --restart unless-stopped ${IMAGE_URI}
+            sudo docker run -d --name ${CONTAINER_SERVICE_NAME} --env-file /home/${VM_SSH_USERNAME}/app.env -p ${CONTAINER_HTTP_PORT}:${CONTAINER_INTERNAL_HTTP_PORT} -p ${CONTAINER_HTTPS_PORT}:${CONTAINER_INTERNAL_HTTPS_PORT} -v /etc/letsencrypt:/etc/letsencrypt --log-driver journald --restart unless-stopped ${IMAGE_URI}
           "
 
       - name: Record deployed image pointers in Key Vault

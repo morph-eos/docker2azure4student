@@ -1,5 +1,7 @@
 # Terraform blueprint for the student-friendly Azure stack
 
+> **Use this repository as a template, not as the place where you deploy.** It is public and holds no secrets. Make **your own private copy** (a private repository with this one as `upstream`), put the secrets and the Azure settings there, and run the deployment workflows from it; pull updates with `git fetch upstream && git merge upstream/main`. A deployment run in a public repository exposes its logs and metadata to everyone. The details are in [AUTOMATION.md](AUTOMATION.md).
+
 This repository contains modular Terraform that stands up a small Azure footprint tailored for Azure for Students subscriptions: one Linux VM that runs your containerized workload and a managed PostgreSQL Flexible Server, with an Azure Key Vault for application secrets, Application Insights / Log Analytics for observability, and automation to keep costs predictable. The accompanying GitHub Actions pipeline deploys it **secretlessly** (Azure login via OpenID Connect, no long-lived credentials) and the VM reads its runtime configuration from Key Vault using its own managed identity.
 
 ## Architecture overview
