@@ -24,7 +24,7 @@ Keep this repository public (or internal) to share Terraform modules, but run Wo
 4. Clone `docker2azure4student`, checkout `main`, create a new branch named `sync/<run-id>-<short-sha>`, copy `sync-bundle/` into the repo root, and push.
 5. Optionally delete local bundle files to avoid lingering secrets.
 
-> Suggested environment variables: `INFRA_REPO`, `INFRA_REPO_DEFAULT_BRANCH`, `SYNC_BRANCH_PREFIX`, and `INFRA_REPO_PAT` (fine-grained PAT with `contents:write`).
+> Suggested environment variables: `INFRA_REPO`, `INFRA_REPO_DEFAULT_BRANCH` and `SYNC_BRANCH_PREFIX`. For the push use the short-lived installation token of a GitHub App installed on the infra repository with `contents: write` only (`actions/create-github-app-token`), not a personal access token: it expires after an hour and is not tied to a person. Its login (`<app-slug>[bot]`) is the value of `DEPLOY_PUSH_ACTOR` in this repository.
 
 ## Workflow B (this repo) – deploy-from-sync.yml
 
@@ -37,7 +37,7 @@ Keep this repository public (or internal) to share Terraform modules, but run Wo
 
 | Secret | Description |
 | --- | --- |
-| `AZURE_CREDENTIALS` | JSON produced by `az ad sp create-for-rbac --sdk-auth` so `azure/login` can obtain tokens. Scope it to the subscription hosting the Terraform stack. |
+| *Azure sign-in (variables, not secrets)* | `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`: `azure/login` uses OIDC with a federated credential, so no Azure secret is stored. `AZURE_PLAN_CLIENT_ID` (optional) is a read-only identity for the plan of pull requests; `DEPLOY_PUSH_ACTOR` and `VM_HOST_KEY` are described in the README. |
 | `TFVARS_B64` | Base64 string (no newlines) of the **entire** `terraform.tfvars`. Every Terraform input—including SSH key, DB password, toggles—is read from this file. |
 | `TF_BACKEND_CONFIG` *(optional)* | Multiline blob copied to `backend.hcl` before `terraform init`. Use it to point Terraform to remote state (e.g., Azure Storage). Leave empty to keep local state. |
 | `IMAGE_REGISTRY` / `IMAGE_NAME` | Registry namespace + repository used in the `docker build` step (for GHCR: `ghcr.io/<org>` and `<repo>`). |
@@ -96,9 +96,9 @@ The Let's Encrypt certificate lives in `/etc/letsencrypt` on the VM, bind-mounte
 
 ## Recommended hardening
 
-- Store secrets in GitHub Environments with required reviewers for production subscriptions.
+- Store secrets in a GitHub Environment (`production`, limited to `main` and `sync/**`), not in the repository; add required reviewers where the plan offers them, otherwise restrict who can create `sync/**` branches (README, *Settings of the private copy*).
 - Configure a remote backend (`TF_BACKEND_CONFIG`) so CLI users and CI share the same Terraform state.
-- Rotate PATs, registry credentials, and app secrets frequently; automate via GitHub Actions OIDC + Azure Federated Credentials when possible.
+- Rotate registry credentials, the GitHub App key and app secrets regularly; Azure already uses OIDC with federated credentials.
 - Add post-deploy smoke tests (curl health check, database migrations) before the workflow tears down the previous container.
 - Monitor the Automation account runbooks (snapshot, cleanup, VM schedule, DB backup) through alerts so missed jobs are detected early.
 
