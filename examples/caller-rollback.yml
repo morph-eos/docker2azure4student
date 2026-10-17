@@ -1,0 +1,46 @@
+# Copy to .github/workflows/rollback.yml of YOUR private repository.
+name: Rollback deployment
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: 'What to roll back'
+        type: choice
+        options: [container, terraform]
+        required: true
+      image_tag:
+        description: '(container) image tag to roll back to; leave empty to use app-image-previous from Key Vault'
+        type: string
+        required: false
+      git_ref:
+        description: '(terraform) tag, branch or commit of the TEMPLATE holding the known-good infra code'
+        type: string
+        required: false
+      apply:
+        description: 'Apply for real? Leave off to preview only.'
+        type: boolean
+        default: false
+
+permissions: {}
+
+jobs:
+  rollback:
+    permissions:
+      contents: read
+      id-token: write
+    uses: morph-eos/docker2azure4student/.github/workflows/rollback.yml@v1
+    with:
+      target: ${{ inputs.target }}
+      image_tag: ${{ inputs.image_tag }}
+      git_ref: ${{ inputs.git_ref }}
+      apply: ${{ inputs.apply }}
+    secrets:
+      TFVARS_B64: ${{ secrets.TFVARS_B64 }}
+      IMAGE_REGISTRY: ${{ secrets.IMAGE_REGISTRY }}
+      IMAGE_NAME: ${{ secrets.IMAGE_NAME }}
+      REGISTRY_LOGIN_SERVER: ${{ secrets.REGISTRY_LOGIN_SERVER }}
+      CONTAINER_REGISTRY_USERNAME: ${{ secrets.CONTAINER_REGISTRY_USERNAME }}
+      CONTAINER_REGISTRY_PASSWORD: ${{ secrets.CONTAINER_REGISTRY_PASSWORD }}
+      VM_SSH_USERNAME: ${{ secrets.VM_SSH_USERNAME }}
+      VM_SSH_KEY: ${{ secrets.VM_SSH_KEY }}

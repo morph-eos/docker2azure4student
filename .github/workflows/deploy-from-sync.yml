@@ -1,15 +1,28 @@
 name: Deploy from sync bundle
 
+# A REUSABLE workflow: a private repository calls it (examples/caller-deploy.yml) at a version of this template, and passes its secrets. The template's Terraform and scripts
+# come from this repository at the version of this very file; the bundle to deploy comes from the sync/ branch of the calling repository.
 on:
-  push:
-    branches:
-      - 'sync/**'
-  workflow_dispatch:
-    inputs:
-      sync_branch:
-        description: 'sync/<timestamp>-<sha> branch to deploy'
-        required: true
-        type: string
+  workflow_call:
+    secrets:
+      TFVARS_B64:
+        required: false
+      IMAGE_REGISTRY:
+        required: false
+      IMAGE_NAME:
+        required: false
+      REGISTRY_LOGIN_SERVER:
+        required: false
+      CONTAINER_REGISTRY_USERNAME:
+        required: false
+      CONTAINER_REGISTRY_PASSWORD:
+        required: false
+      VM_SSH_USERNAME:
+        required: false
+      VM_SSH_KEY:
+        required: false
+      APP_ENV_VARS_B64:
+        required: false
 
 permissions:
   contents: read
@@ -69,11 +82,37 @@ jobs:
           fi
           echo "value=$BRANCH" >> "$GITHUB_OUTPUT"
 
-      - name: Checkout sync branch
+      - name: Resolve the template version (the commit of this workflow file)
+        id: template
+        run: |
+          python3 - <<'P' >> "$GITHUB_OUTPUT"
+          import base64, json, os, urllib.request
+          req = urllib.request.Request(os.environ["ACTIONS_ID_TOKEN_REQUEST_URL"] + "&audience=template-version",
+                                       headers={"Authorization": "bearer " + os.environ["ACTIONS_ID_TOKEN_REQUEST_TOKEN"]})
+          part = json.load(urllib.request.urlopen(req))["value"].split(".")[1]
+          claims = json.loads(base64.urlsafe_b64decode(part + "=" * (-len(part) % 4)))
+          print("repository=" + claims["job_workflow_ref"].split("/.github/workflows/")[0])
+          print("sha=" + claims["job_workflow_sha"])
+          P
+
+      - name: Checkout the template at that version
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: ${{ steps.template.outputs.repository }}
+          ref: ${{ steps.template.outputs.sha }}
+          persist-credentials: false
+
+      - name: Checkout the bundle (the sync branch of the calling repository)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ steps.sync-branch.outputs.value }}
-          fetch-depth: 0
+          path: _bundle
+          persist-credentials: false
+
+      - name: Place the bundle
+        run: |
+          test -f _bundle/sync-bundle/manifest.json || { echo "the branch has no sync-bundle/manifest.json" >&2; exit 1; }
+          cp -r _bundle/sync-bundle ./sync-bundle
 
       - name: Restore terraform.tfvars from secret
         env:
@@ -528,7 +567,7 @@ jobs:
         run: |
           IMAGE_TAG=$(jq -r '.imageTag // empty' manifest.json)
           if [[ -z "$IMAGE_TAG" || "$IMAGE_TAG" == "null" ]]; then
-            IMAGE_TAG=$(git rev-parse --short=12 HEAD)
+            IMAGE_TAG=$(git -C ../_bundle rev-parse --short=12 HEAD)
           fi
           echo "image_tag=$IMAGE_TAG" >> "$GITHUB_OUTPUT"
 
