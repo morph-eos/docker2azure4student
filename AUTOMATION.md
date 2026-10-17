@@ -2,7 +2,7 @@
 
 This guide explains how the private application repository and this public Terraform repository collaborate to deploy code to Azure without leaking proprietary sources. The flow relies on short-lived `sync/...` branches that carry application artifacts only for the duration of the deployment.
 
-> **Recommendation:** before storing any secrets, create your own private copy of this repository (private fork or mirrored repo). You keep the IaC readable for collaborators while ensuring outsiders cannot inspect workflow runs or deployment metadata.
+> **Setup:** you do not copy this repository. Your private repository holds the secrets and two caller workflows and calls the workflows below at a chosen version; see [USING.md](USING.md). "This repo" in this playbook means the template; "your repository" the private one that calls it.
 
 ## Roles & responsibilities
 
@@ -30,10 +30,14 @@ Keep this repository public (or internal) to share Terraform modules, but run Wo
 
 ### Triggers
 
+The template's workflow is reusable (`workflow_call`); the triggers belong to the caller in your repository ([`examples/caller-deploy.yml`](examples/caller-deploy.yml)):
+
 - `push` to any `sync/**` branch (originating from Workflow A).
 - `workflow_dispatch` with a `sync_branch` input to redeploy a specific bundle.
 
 ### Required secrets
+
+Repository secrets of **your** repository, listed by name in the caller (a called workflow receives only what the caller passes).
 
 | Secret | Description |
 | --- | --- |
@@ -61,7 +65,7 @@ On macOS replace `-w0` with `| tr -d '\n'`. Paste the resulting strings into the
 
 ### Job breakdown
 
-1. **Resolve branch and checkout** – `sync-branch` step detects the branch to deploy (from the push ref or `workflow_dispatch` input) and `actions/checkout` grabs its files.
+1. **Resolve branch and checkout** – `sync-branch` step detects the branch to deploy (from the push ref or `workflow_dispatch` input) the workflow then checks out the template (Terraform and scripts, at the version it was called at) and your `sync/...` branch, and places `sync-bundle/` next to the Terraform.
 2. **Restore configuration** – `terraform.tfvars` is reconstructed from `TFVARS_B64`. If `TF_BACKEND_CONFIG` is provided, the workflow writes it to `backend.hcl` and passes `-backend-config=backend.hcl` to `terraform init`.
 3. **Terraform plan/apply** – `hashicorp/setup-terraform` installs Terraform, the workflow logs into Azure via `azure/login`, and `terraform apply -auto-approve` provisions/updates the stack. Before applying, the script `scripts/tfvars_meta.py` extracts metadata (subscription ID, environment name, flags) used to import existing resources when needed.
 4. **Outputs + NSG window** – The pipeline reads `vm_public_ip` and `database_fqdn`. It temporarily adds an NSG rule (`gha-temp-<run-id>`) that allows SSH from the runner so Docker commands can be executed remotely; the rule is deleted at the end regardless of success.

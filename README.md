@@ -1,6 +1,6 @@
 # Terraform blueprint for the student-friendly Azure stack
 
-> **Use this repository as a template, not as the place where you deploy.** It is public and holds no secrets. Make **your own private copy** (a private repository with this one as `upstream`), put the secrets and the Azure settings there, and run the deployment workflows from it; pull updates with `git fetch upstream && git merge upstream/main`. A deployment run in a public repository exposes its logs and metadata to everyone. The details are in [AUTOMATION.md](AUTOMATION.md).
+> **You do not fork or clone this repository to use it.** Your own private repository calls its deploy and rollback workflows at a version you choose (`@v1`, a release tag, or a commit SHA) and holds only your secrets and settings. How: [USING.md](USING.md).
 
 This repository contains modular Terraform that stands up a small Azure footprint tailored for Azure for Students subscriptions: one Linux VM that runs your containerized workload and a managed PostgreSQL Flexible Server, with an Azure Key Vault for application secrets, Application Insights / Log Analytics for observability, and automation to keep costs predictable. The accompanying GitHub Actions pipeline deploys it **secretlessly** (Azure login via OpenID Connect, no long-lived credentials) and the VM reads its runtime configuration from Key Vault using its own managed identity.
 
@@ -178,7 +178,7 @@ Every pull request targeting `main` runs [`.github/workflows/pr-validation.yml`]
 
 ### Continuous deployment
 
-[`.github/workflows/deploy-from-sync.yml`](.github/workflows/deploy-from-sync.yml) runs on a short-lived `sync/...` branch that carries a `sync-bundle/` directory with the application artifacts and Dockerfile. The job:
+[`.github/workflows/deploy-from-sync.yml`](.github/workflows/deploy-from-sync.yml) is a reusable workflow (`workflow_call`), called by a short caller in your private repository ([`examples/caller-deploy.yml`](examples/caller-deploy.yml)) when a short-lived `sync/...` branch arrives there, carrying a `sync-bundle/` directory with the application artifacts and Dockerfile. It runs in the context of your repository and checks out this repository's Terraform at the version you called. The job:
 
 1. Logs in to Azure via **OIDC** and ensures the remote state backend exists.
 2. On a brand-new environment, adopts any pre-existing Azure resources into state; on a populated state this step is skipped.
@@ -191,10 +191,10 @@ The job's `concurrency.group` is fixed per target environment (`deploy-<repo>-pr
 
 ### Rollback
 
-[`.github/workflows/rollback.yml`](.github/workflows/rollback.yml) is a manual (`workflow_dispatch`) workflow for incident response. It has a `target` (either `container` or `terraform`) and an `apply` switch so you can **preview first and apply only after review**:
+[`.github/workflows/rollback.yml`](.github/workflows/rollback.yml) is a reusable workflow called from a manual (`workflow_dispatch`) caller in your repository ([`examples/caller-rollback.yml`](examples/caller-rollback.yml)) for incident response. It has a `target` (either `container` or `terraform`) and an `apply` switch so you can **preview first and apply only after review**:
 
 - **Container** — redeploys a previous, immutable image tag on the VM. The container registry already stores every image; by default the rollback uses `app-image-previous` from Key Vault (the last known-good tag), or you can pass an explicit `image_tag`. The application configuration on the VM is left untouched — only the image is swapped.
-- **Terraform** — re-applies the infrastructure code from a known-good `git_ref` (SHA, tag or branch) against the live remote state. A saved plan is deliberately **not** used for rollback because it goes stale as soon as the state changes; the canonical, reproducible description of the infrastructure is the git commit, and the state account's versioning + soft delete are the safety net.
+- **Terraform** — re-applies the infrastructure code from a known-good `git_ref` of this template (SHA, tag or branch) against the live remote state. A saved plan is deliberately **not** used for rollback because it goes stale as soon as the state changes; the canonical, reproducible description of the infrastructure is the git commit, and the state account's versioning + soft delete are the safety net.
 
 Refer to `AUTOMATION.md` for the full automation playbook, including required secrets/variables and how the application and infrastructure repositories coordinate.
 
@@ -209,22 +209,24 @@ Refer to `AUTOMATION.md` for the full automation playbook, including required se
 ├── moved.tf               # State `moved` blocks mapping resources to their module addresses
 ├── providers.tf / versions.tf  # Providers + remote azurerm backend declaration
 ├── modules/               # network, compute, database, automation, storage, keyvault, monitoring
-├── .github/workflows/     # pr-validation.yml, security-scan.yml, deploy-from-sync.yml, rollback.yml
+├── .github/workflows/     # pr-validation.yml, security-scan.yml (own checks); deploy-from-sync.yml, rollback.yml (reusable, called by your repository)
+├── examples/              # the two caller workflows to copy into your private repository
 ├── scripts/tfvars_meta.py # Utility used by CI to read tfvars metadata
 ├── scripts/vm-prepare-host.sh # Idempotent VM prep: swap file, persistent journald
 ├── .trivyignore           # Accepted security-scan baseline
 ├── terraform.tfvars.example
 ├── README.md
+├── USING.md               # how to use it without cloning or forking
 └── AUTOMATION.md
 ```
 
-## Settings of the private copy that matter
+## Settings of your private repository that matter
 
-The workflows assume these; the template cannot set them for you.
+The workflows assume these; the template cannot set them for you. The full list, with the reasons, is in [USING.md](USING.md) (*Set it up* and *Security*).
 
-- **Ruleset on `main`**: pull request required, the `validate` and `trivy` checks required, no bypass actor. (A private repository needs GitHub Pro for rulesets; an organization on the free plan has none, and the points below that depend on one are then the open risk.)
+- **Ruleset on `main`**: pull request required, no bypass actor. (A private repository needs GitHub Pro for rulesets; an organization on the free plan has none, and the points below that depend on one are then the open risk.)
 - **Who may create `sync/**` branches**: a second ruleset on `refs/heads/sync/**` with the rules *creation*, *update* and *non fast forward*, and the deploy bot (its GitHub App) as the only bypass actor. Together with the repository variable `DEPLOY_PUSH_ACTOR` (the bot's login, `<app-slug>[bot]`: a push to `sync/**` by anyone else does not deploy) this decides who can start a deployment by push. Required reviewers on the environment would do it with a click, but GitHub offers them on private repositories only on paid team plans.
-- **Environment `production`**: deployments only from `main` and `sync/**`; the deployment secrets belong to the environment, not to the repository, so a workflow on any other branch cannot read them.
-- **Azure**: the federated credential of the deploy identity is bound to the environment (`...:environment:production`); a second, read-only identity (`AZURE_PLAN_CLIENT_ID`) serves pull requests.
+- **Environment `production`**: it carries the OIDC subject; the deployment secrets are **repository** secrets listed by name in the caller, because a called workflow sees no environment secrets.
+- **Azure**: the federated credential of the deploy identity is bound to the environment (`...:environment:production`) of your repository.
 - **SSH**: set the repository variable `VM_HOST_KEY` to the VM's host key line (`ssh-keyscan -t ed25519 <ip>` from a trusted network, once); the workflows then check the VM against it. Update it when the VM is recreated.
-- **Dependabot**: it runs in this public repository only. In a private copy delete `.github/dependabot.yml` (otherwise every copy opens the same pull requests) and take the updates by merging `upstream`.
+- **Dependabot** runs in this public repository only; your repository has no code to update. The version of the template you call is changed by hand.
