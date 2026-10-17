@@ -59,7 +59,7 @@ Further alerts, all through the same action group:
 
 - **Database**: storage above 85% and CPU above 90% for 30 minutes.
 - **Automation jobs**: any runbook job `Failed` or `Suspended` (only when the Automation Account exists).
-- **Site availability and TLS**: not an Azure resource. Standard web tests are billed per execution, which does not fit the student budget, so the check is a scheduled GitHub Actions workflow in `git-locus/.github` (`site-health.yml`).
+- **Site availability and TLS**: not an Azure resource. Standard web tests are billed per execution, which does not fit the student budget, so the check is a scheduled GitHub Actions workflow of your application's pipeline (see *TLS certificate renewal and expiry monitoring* in `AUTOMATION.md`).
 
 The VM's disk usage has no host metric, so it is not alerted on.
 

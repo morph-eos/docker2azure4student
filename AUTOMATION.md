@@ -43,7 +43,6 @@ Repository secrets of **your** repository, listed by name in the caller (a calle
 | --- | --- |
 | *Azure sign-in (variables, not secrets)* | `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`: `azure/login` uses OIDC with a federated credential, so no Azure secret is stored. `AZURE_PLAN_CLIENT_ID` (optional) is a read-only identity for the plan of pull requests; `DEPLOY_PUSH_ACTOR` and `VM_HOST_KEY` are described in the README. |
 | `TFVARS_B64` | Base64 string (no newlines) of the **entire** `terraform.tfvars`. Every Terraform input—including SSH key, DB password, toggles—is read from this file. |
-| `TF_BACKEND_CONFIG` *(optional)* | Multiline blob copied to `backend.hcl` before `terraform init`. Use it to point Terraform to remote state (e.g., Azure Storage). Leave empty to keep local state. |
 | `IMAGE_REGISTRY` / `IMAGE_NAME` | Registry namespace + repository used in the `docker build` step (for GHCR: `ghcr.io/<org>` and `<repo>`). |
 | `REGISTRY_LOGIN_SERVER` | Host passed to `docker login` (e.g., `ghcr.io` or `<acr>.azurecr.io`). |
 | `CONTAINER_REGISTRY_USERNAME` / `CONTAINER_REGISTRY_PASSWORD` | Credentials valid both on the GitHub runner and on the VM (used during `docker login` inside SSH). |
@@ -66,7 +65,7 @@ On macOS replace `-w0` with `| tr -d '\n'`. Paste the resulting strings into the
 ### Job breakdown
 
 1. **Resolve branch and checkout** – `sync-branch` step detects the branch to deploy (from the push ref or `workflow_dispatch` input) the workflow then checks out the template (Terraform and scripts, at the version it was called at) and your `sync/...` branch, and places `sync-bundle/` next to the Terraform.
-2. **Restore configuration** – `terraform.tfvars` is reconstructed from `TFVARS_B64`. If `TF_BACKEND_CONFIG` is provided, the workflow writes it to `backend.hcl` and passes `-backend-config=backend.hcl` to `terraform init`.
+2. **Restore configuration** – `terraform.tfvars` is reconstructed from `TFVARS_B64`. The remote-state settings are not a secret: the workflow derives the storage account from the subscription and passes them to `terraform init` as `-backend-config` arguments (see *Remote state* in the README).
 3. **Terraform plan/apply** – `hashicorp/setup-terraform` installs Terraform, the workflow logs into Azure via `azure/login`, and `terraform apply -auto-approve` provisions/updates the stack. Before applying, the script `scripts/tfvars_meta.py` extracts metadata (subscription ID, environment name, flags) used to import existing resources when needed.
 4. **Outputs + NSG window** – The pipeline reads `vm_public_ip` and `database_fqdn`. It temporarily adds an NSG rule (`gha-temp-<run-id>`) that allows SSH from the runner so Docker commands can be executed remotely; the rule is deleted at the end regardless of success.
 5. **Build & push image** – The runner logs into the container registry, builds `sync-bundle/Dockerfile`, tags the image as `${IMAGE_REGISTRY}/${IMAGE_NAME}:${imageTag}`, and pushes it.
@@ -89,7 +88,7 @@ Modify them in the workflow file if your VM exposes different ports or if you ru
 The Let's Encrypt certificate lives in `/etc/letsencrypt` on the VM, bind-mounted into the container, so it survives every redeploy. Renewal does not depend on releases:
 
 - **Renewal**: a supervisord program in the app image (`certbot-renew`) runs `certbot renew` every 12 hours. Certbot only renews when under 30 days remain and, after a renewal, runs `nginx -s reload`. There is **no downtime** and no container restart. Its output goes to the container logs, which the VM keeps in the persistent journal (`journalctl CONTAINER_NAME=app-service`).
-- **Detection**: the `site-health.yml` workflow in the `git-locus/.github` repo is scheduled every hour (GitHub schedules are best effort: runs can be delayed or skipped, so it catches an expiring certificate rather than guaranteeing outage detection time) and fails when `https://<DOMAIN>/landing` does not answer 200 or when the certificate has under 14 days left. A failed run sends GitHub's workflow-failure notification. Because renewal starts at 30 days, a failure at 14 days means renewal did not happen for two weeks. The check is a GitHub workflow and not an Azure availability test because standard web tests are billed per execution.
+- **Detection**: a scheduled GitHub workflow of your application's pipeline (the template does not ship it) runs every hour (GitHub schedules are best effort: runs can be delayed or skipped, so it catches an expiring certificate rather than guaranteeing outage detection time) and fails when `https://<DOMAIN>/landing` does not answer 200 or when the certificate has under 14 days left. A failed run sends GitHub's workflow-failure notification. Because renewal starts at 30 days, a failure at 14 days means renewal did not happen for two weeks. The check is a GitHub workflow and not an Azure availability test because standard web tests are billed per execution. Any equivalent works: a request to `https://<DOMAIN>/landing` and a look at the certificate's expiry date.
 - **Verification without touching the live certificate**: run `certbot renew --dry-run` in the container (for example through `az vm run-command invoke` on the VM). It performs the full challenge against Let's Encrypt staging. Non-interactive runs wait a random delay of up to 8 minutes first.
 
 ## Branch hygiene & auditing
@@ -101,7 +100,7 @@ The Let's Encrypt certificate lives in `/etc/letsencrypt` on the VM, bind-mounte
 ## Recommended hardening
 
 - Store secrets in a GitHub Environment (`production`, limited to `main` and `sync/**`), not in the repository; add required reviewers where the plan offers them, otherwise restrict who can create `sync/**` branches (README, *Settings of the private copy*).
-- Configure a remote backend (`TF_BACKEND_CONFIG`) so CLI users and CI share the same Terraform state.
+- The remote state is shared with the CLI: run Terraform locally only against the same backend (README, *Remote state*), never with a local state next to CI's.
 - Rotate registry credentials, the GitHub App key and app secrets regularly; Azure already uses OIDC with federated credentials.
 - Add post-deploy smoke tests (curl health check, database migrations) before the workflow tears down the previous container.
 - Monitor the Automation account runbooks (snapshot, cleanup, VM schedule, DB backup) through alerts so missed jobs are detected early.
