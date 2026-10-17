@@ -16,8 +16,9 @@ permissions:
 
 jobs:
   deploy:
-    # Inert in a copy that has no Azure settings (the public template).
-    if: ${{ vars.AZURE_CLIENT_ID != '' }}
+    # Inert in a copy that has no Azure settings (the public template). With the repository variable DEPLOY_PUSH_ACTOR (the bot that pushes the bundles, for
+    # example `my-deploy-bot[bot]`) a push to sync/** deploys only when that bot made it; a manual dispatch is unaffected.
+    if: ${{ vars.AZURE_CLIENT_ID != '' && (github.event_name != 'push' || vars.DEPLOY_PUSH_ACTOR == '' || github.actor == vars.DEPLOY_PUSH_ACTOR) }}
     runs-on: ubuntu-latest
     environment: production
     permissions:

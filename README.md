@@ -225,4 +225,5 @@ The workflows assume these; the template cannot set them for you.
 - **Ruleset on `main`**: pull request required, the `validate` and `trivy` checks required, no bypass actor.
 - **Environment `production`**: required reviewer (you), deployments only from `sync/**`; the deployment secrets belong to the environment, not to the repository.
 - **Azure**: the federated credential of the deploy identity is bound to the environment (`...:environment:production`); a second, read-only identity (`AZURE_PLAN_CLIENT_ID`) serves pull requests.
+- **Who may deploy by push**: set the repository variable `DEPLOY_PUSH_ACTOR` to the deploy bot's login (`<app-slug>[bot]`); a push to `sync/**` by anyone else does not deploy.
 - **SSH**: set the repository variable `VM_HOST_KEY` to the VM's host key line (`ssh-keyscan -t ed25519 <ip>` from a trusted network, once); the workflows then check the VM against it. Update it when the VM is recreated.
