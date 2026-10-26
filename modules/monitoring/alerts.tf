@@ -2,21 +2,15 @@
 
 locals {
   # When the daily ingestion cap is on: a warning once the last 24 hours reach
-  # 80% of it, and a notice when Azure stops collecting because it was reached
-  # (collection resumes at the workspace's reset hour). Both are log alerts, so
-  # they cost a little per rule: check the price in the Azure portal.
+  # 80% of it, ahead of Azure stopping collection when it is reached. A log alert
+  # is billed per rule by how often it is evaluated, and 15 minutes is the
+  # cheapest tier (an hourly rule costs the same), so the evaluation is hourly.
   log_cap_alerts = local.daily_quota_gb <= 0 ? {} : {
     warning = {
       summary   = "the last 24 hours of billable logs reached 80% of the daily cap (${local.daily_quota_gb * 1024} MB)"
       query     = "Usage | where IsBillable | summarize MB = sum(Quantity) | where MB > ${floor(local.daily_quota_gb * 1024 * 0.8)}"
       frequency = "PT1H"
       window    = "P1D"
-    }
-    reached = {
-      summary   = "the daily cap was reached and log collection stopped until the reset hour"
-      query     = "_LogOperation | where Category =~ 'Ingestion' | where Detail contains 'OverQuota'"
-      frequency = "PT5M"
-      window    = "PT5M"
     }
   }
 
