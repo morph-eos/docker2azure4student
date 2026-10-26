@@ -1,3 +1,9 @@
+locals {
+  # The daily ingestion quota (GB) that keeps the workspace at max_total_gb over
+  # the retention window, or -1 when the cap is off.
+  daily_quota_gb = var.max_total_gb > 0 ? var.max_total_gb / var.retention_days : -1
+}
+
 resource "azurerm_log_analytics_workspace" "main" {
   name                = "${var.name_prefix}-law"
   location            = var.location
@@ -6,8 +12,9 @@ resource "azurerm_log_analytics_workspace" "main" {
   retention_in_days   = var.retention_days
 
   # Keep cost/size modest: cap daily ingestion so total stays ~<= max_total_gb
-  # over the retention window. -1 disables the cap.
-  daily_quota_gb = var.max_total_gb > 0 ? var.max_total_gb / var.retention_days : -1
+  # over the retention window. -1 disables the cap. The cap counts what arrives
+  # per day, not what is stored: old data is deleted by the retention setting.
+  daily_quota_gb = local.daily_quota_gb
 
   tags = merge(var.tags, { component = "monitoring" })
 }
@@ -23,18 +30,17 @@ resource "azurerm_application_insights" "main" {
   tags = merge(var.tags, { component = "monitoring" })
 }
 
-# Route resource logs + metrics into the workspace.
+# Route resource logs into the workspace. PostgreSQL sends only its server log:
+# the session, table and transaction statistics categories and a copy of the
+# platform metrics add volume against the daily cap and nothing reads them (the
+# database alerts use the platform metrics directly).
 resource "azurerm_monitor_diagnostic_setting" "postgres" {
   name                       = "to-law"
   target_resource_id         = var.postgres_id
   log_analytics_workspace_id = azurerm_log_analytics_workspace.main.id
 
   enabled_log {
-    category_group = "allLogs"
-  }
-
-  enabled_metric {
-    category = "AllMetrics"
+    category = "PostgreSQLLogs"
   }
 }
 
@@ -49,6 +55,24 @@ resource "azurerm_monitor_diagnostic_setting" "keyvault" {
 
   enabled_metric {
     category = "AllMetrics"
+  }
+}
+
+# E-mail logs of Azure Communication Services: one row per send request and one
+# per delivery status, to see what happened to a given message. Optional because
+# the resource is not part of this template.
+resource "azurerm_monitor_diagnostic_setting" "communication" {
+  count                      = var.communication_service_id == "" ? 0 : 1
+  name                       = "to-law"
+  target_resource_id         = var.communication_service_id
+  log_analytics_workspace_id = azurerm_log_analytics_workspace.main.id
+
+  enabled_log {
+    category = "EmailSendMailOperational"
+  }
+
+  enabled_log {
+    category = "EmailStatusUpdateOperational"
   }
 }
 

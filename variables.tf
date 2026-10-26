@@ -16,6 +16,12 @@ variable "log_max_total_gb" {
   default     = 3
 }
 
+variable "communication_service_id" {
+  description = "Optional resource ID of an Azure Communication Services resource whose e-mail send and delivery-status logs are routed to the Log Analytics workspace. Empty disables it. Normally set through the COMMUNICATION_SERVICE_ID repository variable (TF_VAR_communication_service_id)."
+  type        = string
+  default     = ""
+}
+
 variable "alert_email" {
   description = "Optional extra email address notified by alerts, in addition to the subscription Owners."
   type        = string

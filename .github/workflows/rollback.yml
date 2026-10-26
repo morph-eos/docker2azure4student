@@ -62,6 +62,8 @@ permissions:
 
 env:
   TF_IN_AUTOMATION: 'true'
+  # Optional repository variable (see deploy-from-sync.yml). A template ref that does not declare the variable ignores it.
+  TF_VAR_communication_service_id: ${{ vars.COMMUNICATION_SERVICE_ID }}
   TERRAFORM_WORKING_DIR: '.'
   CONTAINER_SERVICE_NAME: 'app-service'
   CONTAINER_HTTP_PORT: '80'

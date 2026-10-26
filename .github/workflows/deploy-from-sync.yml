@@ -53,6 +53,8 @@ jobs:
       cancel-in-progress: false
     env:
       TF_IN_AUTOMATION: 'true'
+      # Optional repository variable: the resource ID of the Azure Communication Services resource whose e-mail logs go to the workspace.
+      TF_VAR_communication_service_id: ${{ vars.COMMUNICATION_SERVICE_ID }}
       TERRAFORM_WORKING_DIR: '.'
       CONTAINER_SERVICE_NAME: 'app-service'
       CONTAINER_HTTP_PORT: '80'

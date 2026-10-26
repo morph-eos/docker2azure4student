@@ -1,7 +1,25 @@
-# Metric alerts beyond the VM memory one (main.tf). All notify the shared
-# action group.
+# Alerts beyond the VM memory one (main.tf). All notify the shared action group.
 
 locals {
+  # When the daily ingestion cap is on: a warning once the last 24 hours reach
+  # 80% of it, and a notice when Azure stops collecting because it was reached
+  # (collection resumes at the workspace's reset hour). Both are log alerts, so
+  # they cost a little per rule: check the price in the Azure portal.
+  log_cap_alerts = local.daily_quota_gb <= 0 ? {} : {
+    warning = {
+      summary   = "the last 24 hours of billable logs reached 80% of the daily cap (${local.daily_quota_gb * 1024} MB)"
+      query     = "Usage | where IsBillable | summarize MB = sum(Quantity) | where MB > ${floor(local.daily_quota_gb * 1024 * 0.8)}"
+      frequency = "PT1H"
+      window    = "P1D"
+    }
+    reached = {
+      summary   = "the daily cap was reached and log collection stopped until the reset hour"
+      query     = "_LogOperation | where Category =~ 'Ingestion' | where Detail contains 'OverQuota'"
+      frequency = "PT5M"
+      window    = "PT5M"
+    }
+  }
+
   db_alerts = {
     storage = {
       metric    = "storage_percent"
@@ -69,6 +87,31 @@ resource "azurerm_monitor_metric_alert" "automation_job_failed" {
 
   action {
     action_group_id = azurerm_monitor_action_group.ops.id
+  }
+
+  tags = merge(var.tags, { component = "monitoring" })
+}
+
+resource "azurerm_monitor_scheduled_query_rules_alert_v2" "log_cap" {
+  for_each             = local.log_cap_alerts
+  name                 = "${var.name_prefix}-law-cap-${each.key}"
+  resource_group_name  = var.resource_group_name
+  location             = var.location
+  scopes               = [azurerm_log_analytics_workspace.main.id]
+  description          = "Log Analytics: ${each.value.summary}."
+  severity             = 2
+  evaluation_frequency = each.value.frequency
+  window_duration      = each.value.window
+
+  criteria {
+    query                   = each.value.query
+    time_aggregation_method = "Count"
+    operator                = "GreaterThan"
+    threshold               = 0
+  }
+
+  action {
+    action_groups = [azurerm_monitor_action_group.ops.id]
   }
 
   tags = merge(var.tags, { component = "monitoring" })

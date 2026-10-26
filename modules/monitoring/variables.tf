@@ -41,6 +41,12 @@ variable "key_vault_id" {
   type        = string
 }
 
+variable "communication_service_id" {
+  description = "Optional resource ID of an Azure Communication Services resource whose e-mail send and delivery-status logs are routed to the workspace. Empty disables it."
+  type        = string
+  default     = ""
+}
+
 variable "vm_id" {
   description = "Resource ID of the VM whose available memory is alerted on."
   type        = string
