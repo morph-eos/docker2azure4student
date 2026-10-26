@@ -135,6 +135,8 @@ module "monitoring" {
   vm_id               = module.compute.vm_id
   alert_email         = var.alert_email
 
+  communication_service_id = var.communication_service_id
+
   automation_enabled    = var.vm_schedule_enabled || var.db_backup_enabled || var.vm_snapshot_runbook_enabled || var.vm_snapshot_cleanup_enabled
   automation_account_id = module.automation.automation_account_id
 }

@@ -16,7 +16,7 @@ Everything lives in a single resource group whose name is derived from `environm
 | **storage** | Optional Azure Storage Account for blobs (`blob_storage_enabled`), Standard LRS, TLS 1.2 only, public access disabled, with **blob versioning and 7-day soft delete** for recoverability. |
 | **automation** | Azure Automation account + runbooks, created only when at least one automation feature is enabled (VM start/stop schedules, ad-hoc snapshots, snapshot cleanup, on-demand PostgreSQL backups). |
 | **keyvault** | Azure Key Vault holding the application secrets (see *Secret management* below), with access policies for the pipeline (read/write) and the VM identity (read). |
-| **monitoring** | Log Analytics workspace (with a daily ingestion cap to keep costs modest), workspace-based Application Insights, diagnostic settings that route PostgreSQL and Key Vault logs/metrics to the workspace, and a free observability **workbook** (requests / exceptions / traces over KQL). |
+| **monitoring** | Log Analytics workspace (with a daily ingestion cap to keep costs modest), workspace-based Application Insights, diagnostic settings that route the PostgreSQL server log and the Key Vault audit log to the workspace (plus, optionally, the e-mail logs of an Azure Communication Services resource), log alerts on the daily cap, and a free observability **workbook** (requests / exceptions / traces over KQL). |
 
 The root module wires the modules together, owns the resource group, stores the Application Insights connection string in Key Vault, and exposes connection details (SSH command, VM IP, database FQDN/connection string, storage account name, Key Vault name) as outputs.
 
@@ -49,19 +49,33 @@ Application secrets live in Azure Key Vault rather than in the application repos
 Telemetry and resource logs land in a single Log Analytics workspace, with cost kept predictable by design:
 
 - **Application Insights** is workspace-based; its connection string is stored in Key Vault (`appinsights-connection-string`) and injected into the application environment, so the app reports requests, dependencies, exceptions, and traces.
-- **Diagnostic settings** forward PostgreSQL and Key Vault logs/metrics into the same workspace.
+- **Diagnostic settings** forward the PostgreSQL server log (`PostgreSQLLogs`) and the Key Vault audit log into the same workspace. PostgreSQL's session, table and transaction statistics and a copy of its platform metrics are not sent: they cost volume against the daily cap and nothing reads them (the database alerts use the platform metrics directly).
+- **E-mail logs** (optional): set `communication_service_id` to the resource ID of an Azure Communication Services resource and its send (`EmailSendMailOperational`) and delivery-status (`EmailStatusUpdateOperational`) logs are routed too, so you can see what happened to one message (accepted, delivered, bounced, with the SMTP code). In a deployment through the caller workflows, set the repository variable `COMMUNICATION_SERVICE_ID` instead of editing `terraform.tfvars`. The logs hold the recipients' addresses and are kept for `retention_days`: take that into account in your privacy notice. The resource itself is not created by this template.
 - A free Application Insights **workbook** (`<prefix> observability`) charts requests, top exceptions, and recent traces with ready-made KQL queries.
-- A **daily ingestion cap** keeps the bill modest: `log_max_total_gb` (default `3`) is enforced as `daily_quota_gb = log_max_total_gb / retention_days`. Set it to `-1` to disable the cap. (Azure's minimum workspace retention is 30 days, so the cap limits ingestion rate rather than deleting old data row by row.)
+- A **daily ingestion cap** keeps the bill modest: `log_max_total_gb` (default `3`) is enforced as `daily_quota_gb = log_max_total_gb / retention_days`, 0.1 GB a day with the defaults. Set it to `-1` to disable the cap. The cap limits what is **ingested per day**, not what is stored: Azure deletes data older than `retention_days` (30 by default; Application Insights tables keep 90 days) on its own, so a shorter retention frees no room under the cap. When the cap is reached, Azure stops collecting every billable table (application telemetry included) until the workspace's reset hour, which cannot be configured.
+- Two **log alerts** watch the cap, through the same action group as below: a warning when the last 24 hours reach 80% of it, and a notice when Azure stopped collecting because it was reached. Log alert rules are billed per rule; check the price in the Azure portal. They exist only while the cap is on.
 
 - A **low-memory alert** fires when the VM's average available memory over 15 minutes drops below `memory_alert_threshold_mb` (default `60`). It notifies, through an email-only action group, every Owner of the subscription (Azure resolves the addresses itself) plus the optional `alert_email`. Confirm the metric alert price in the Azure portal, and use the portal's "Test action group" button once after the first apply to check the mail arrives.
 
 Further alerts, all through the same action group:
 
 - **Database**: storage above 85% and CPU above 90% for 30 minutes.
+- **Log Analytics daily cap**: 80% of it reached in the last 24 hours, and cap reached (see above).
 - **Automation jobs**: any runbook job `Failed` or `Suspended` (only when the Automation Account exists).
 - **Site availability and TLS**: not an Azure resource. Standard web tests are billed per execution, which does not fit the student budget, so the check is a scheduled GitHub Actions workflow of your application's pipeline (see *TLS certificate renewal and expiry monitoring* in `AUTOMATION.md`).
 
 The VM's disk usage has no host metric, so it is not alerted on.
+
+### Keeping the workspace under the cap
+
+On a small deployment most of the volume is the PostgreSQL server log. Azure turns on `log_connections` and `log_disconnections`, which write 3 to 4 lines per connection; most connections are Azure's own management and health sessions (user `azuresu`, thousands a day), not the application's. See what fills the workspace:
+
+```kusto
+Usage | where TimeGenerated > ago(30d) and IsBillable
+| summarize GB = round(sum(Quantity) / 1024, 2) by DataType | order by GB desc
+```
+
+The template leaves those two server parameters as Azure sets them, because they are also the trail of who connected to the database. If you do not need it, switching them off removes most of the PostgreSQL log volume: `az postgres flexible-server parameter set -g <resource-group> -s <server> --name log_connections --value off` (and `log_disconnections`). Application Insights adds performance counters, which can be turned off in the application's telemetry configuration. Raising `log_max_total_gb` is the last resort: ingestion above the free allowance of the Log Analytics price list is billed.
 
 ### Host preparation and container logs
 

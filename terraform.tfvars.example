@@ -43,3 +43,6 @@ blob_storage_enabled         = false
 
 # Optional: extra email for alerts (subscription Owners are always notified)
 alert_email                  = ""
+
+# Optional: Azure Communication Services resource ID, to route its e-mail send and delivery-status logs to the Log Analytics workspace
+# communication_service_id   = "/subscriptions/<id>/resourceGroups/<rg>/providers/Microsoft.Communication/CommunicationServices/<name>"
