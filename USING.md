@@ -51,7 +51,10 @@ To update: change the version in the two callers, in a pull request of one line,
 
 ## Upgrading
 ### From v2.0 to v2.1 (log volume and e-mail logs)
-`v2.1.0` changes only what monitoring does, no VM, database or network resource: the PostgreSQL diagnostic setting sends `PostgreSQLLogs` only (no session, table and transaction statistics, no copy of the platform metrics), two log alerts watch the Log Analytics daily cap, and the optional `COMMUNICATION_SERVICE_ID` repository variable routes the e-mail logs. Nothing else needs to change. The plan should show a diagnostic setting updated, two scheduled query rules created and, with the variable set, one diagnostic setting created.
+`v2.1.0` changes only what monitoring does, no VM, database or network resource: the PostgreSQL diagnostic setting sends `PostgreSQLLogs` only (no session, table and transaction statistics, no copy of the platform metrics), a log alert watches the Log Analytics daily cap (80% reached), and the optional `COMMUNICATION_SERVICE_ID` repository variable routes the e-mail logs. Nothing else needs to change. The plan should show a diagnostic setting updated, one scheduled query rule created and, with the variable set, one diagnostic setting created.
+
+### From v2.1.0 to v2.1.1
+`v2.1.1` keeps only the 80% warning on the daily cap: the second log alert (cap reached) is removed, so a deployment on `v2.1.0` sees one scheduled query rule destroyed. Log alerts are billed per rule and the warning already arrives ahead of the cap.
 
 ### From v1 to v2 (Ubuntu 24.04 and azurerm 5)
 `v2.0.0` moves the VM from Ubuntu 22.04 to **Ubuntu 24.04 LTS** (supported until 2029; 22.04's standard support ends in 2027) and the Terraform provider from azurerm 3 to **5**. That is why it is a major version: the next deploy **replaces the VM** (a new OS disk). Expect about 8 minutes without the site, and:
