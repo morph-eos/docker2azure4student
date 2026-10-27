@@ -18,6 +18,7 @@ jobs:
     permissions:
       contents: write   # the template's cleanup job deletes the sync branch afterwards
       id-token: write   # Azure sign-in by OIDC
+      # packages: write # only for the optional PUSH_REGISTRY_* below
     # The version of the template is the part after @: a release tag (v1), or a commit SHA to freeze it.
     uses: morph-eos/docker2azure4student/.github/workflows/deploy-from-sync.yml@v1
     secrets:
@@ -27,6 +28,9 @@ jobs:
       REGISTRY_LOGIN_SERVER: ${{ secrets.REGISTRY_LOGIN_SERVER }}
       CONTAINER_REGISTRY_USERNAME: ${{ secrets.CONTAINER_REGISTRY_USERNAME }}
       CONTAINER_REGISTRY_PASSWORD: ${{ secrets.CONTAINER_REGISTRY_PASSWORD }}
+      # Optional (GHCR): push with this repository's own token, so CONTAINER_REGISTRY_* only needs to read.
+      # PUSH_REGISTRY_USERNAME: ${{ github.actor }}
+      # PUSH_REGISTRY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
       VM_SSH_USERNAME: ${{ secrets.VM_SSH_USERNAME }}
       VM_SSH_KEY: ${{ secrets.VM_SSH_KEY }}
       APP_ENV_VARS_B64: ${{ secrets.APP_ENV_VARS_B64 }}
