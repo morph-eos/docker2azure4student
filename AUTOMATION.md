@@ -45,7 +45,8 @@ Repository secrets of **your** repository, listed by name in the caller (a calle
 | `TFVARS_B64` | Base64 string (no newlines) of the **entire** `terraform.tfvars`. Every Terraform input—including SSH key, DB password, toggles—is read from this file. |
 | `IMAGE_REGISTRY` / `IMAGE_NAME` | Registry namespace + repository used in the `docker build` step (for GHCR: `ghcr.io/<org>` and `<repo>`). |
 | `REGISTRY_LOGIN_SERVER` | Host passed to `docker login` (e.g., `ghcr.io` or `<acr>.azurecr.io`). |
-| `CONTAINER_REGISTRY_USERNAME` / `CONTAINER_REGISTRY_PASSWORD` | Credentials valid both on the GitHub runner and on the VM (used during `docker login` inside SSH). |
+| `CONTAINER_REGISTRY_USERNAME` / `CONTAINER_REGISTRY_PASSWORD` | Credentials for the `docker login` on the VM (the password travels on stdin over SSH) and, unless `PUSH_REGISTRY_*` is passed, on the GitHub runner too. |
+| `PUSH_REGISTRY_USERNAME` / `PUSH_REGISTRY_PASSWORD` | Optional. Credentials for the push on the runner only. For GHCR the caller can pass its own token (`${{ github.actor }}` and `${{ secrets.GITHUB_TOKEN }}`): the caller job then needs `packages: write`, and the package must give the calling repository write access (package settings, Manage Actions access). `CONTAINER_REGISTRY_*` can then be a token that only reads (`read:packages` for GHCR). |
 | `APP_ENV_VARS_B64` | Base64 string for the `.env` file copied to the VM (contains app runtime secrets). |
 | `VM_SSH_USERNAME` | Linux username created on the VM (matches `var.vm_admin_username`). |
 | `VM_SSH_KEY` | Private key able to log into the VM (the corresponding public key is stored in Terraform). |

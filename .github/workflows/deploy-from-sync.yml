@@ -17,6 +17,10 @@ on:
         required: false
       CONTAINER_REGISTRY_PASSWORD:
         required: false
+      PUSH_REGISTRY_USERNAME:
+        required: false
+      PUSH_REGISTRY_PASSWORD:
+        required: false
       VM_SSH_USERNAME:
         required: false
       VM_SSH_KEY:
@@ -589,13 +593,20 @@ jobs:
           fi
           echo "image_tag=$IMAGE_TAG" >> "$GITHUB_OUTPUT"
 
+      # The push uses PUSH_REGISTRY_* when the caller passes them (for GHCR: the caller's own GITHUB_TOKEN), otherwise the CONTAINER_REGISTRY_* pair.
+      # Only the VM then needs a stored credential, and it only has to read.
       - name: Docker login
+        env:
+          PUSH_REGISTRY_USERNAME: ${{ secrets.PUSH_REGISTRY_USERNAME }}
+          PUSH_REGISTRY_PASSWORD: ${{ secrets.PUSH_REGISTRY_PASSWORD }}
         run: |
-          if [[ -z "$CONTAINER_REGISTRY_USERNAME" || -z "$CONTAINER_REGISTRY_PASSWORD" ]]; then
+          user="${PUSH_REGISTRY_USERNAME:-$CONTAINER_REGISTRY_USERNAME}"
+          password="${PUSH_REGISTRY_PASSWORD:-$CONTAINER_REGISTRY_PASSWORD}"
+          if [[ -z "$user" || -z "$password" ]]; then
             echo "Container registry credentials are missing" >&2
             exit 1
           fi
-          echo "$CONTAINER_REGISTRY_PASSWORD" | docker login "$REGISTRY_LOGIN_SERVER" -u "$CONTAINER_REGISTRY_USERNAME" --password-stdin
+          printf '%s' "$password" | docker login "$REGISTRY_LOGIN_SERVER" -u "$user" --password-stdin
 
       - name: Build and push container image
         id: build-push
@@ -784,10 +795,11 @@ jobs:
           IMAGE_URI: ${{ steps.build-push.outputs.image_uri }}
           VM_IP: ${{ steps.tf-outputs.outputs.vm_ip }}
         run: |
-          ssh -o StrictHostKeyChecking=${SSH_STRICT:-no} ${VM_SSH_USERNAME}@${VM_IP} "
+          # The password goes in on stdin, so it is not part of the command line that the VM's process list shows.
+          printf '%s' "$CONTAINER_REGISTRY_PASSWORD" | ssh -o StrictHostKeyChecking=${SSH_STRICT:-no} ${VM_SSH_USERNAME}@${VM_IP} "
             set -euo pipefail
             sudo mkdir -p /etc/letsencrypt
-            sudo docker login ${REGISTRY_LOGIN_SERVER} -u '${CONTAINER_REGISTRY_USERNAME}' -p '${CONTAINER_REGISTRY_PASSWORD}'
+            sudo docker login ${REGISTRY_LOGIN_SERVER} -u '${CONTAINER_REGISTRY_USERNAME}' --password-stdin
             pull_ok=0
             for i in 1 2 3 4 5; do
               if sudo docker pull ${IMAGE_URI}; then

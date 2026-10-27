@@ -252,13 +252,14 @@ jobs:
           set -euo pipefail
           # Reuse the app.env already present on the VM (written by the last deploy
           # from Key Vault). Rollback swaps the image, not the configuration.
-          ssh -o StrictHostKeyChecking=${SSH_STRICT:-no} "${VM_SSH_USERNAME}@${VM_IP}" "
+          # The password goes in on stdin, so it is not part of the command line that the VM's process list shows.
+          printf '%s' "$CONTAINER_REGISTRY_PASSWORD" | ssh -o StrictHostKeyChecking=${SSH_STRICT:-no} "${VM_SSH_USERNAME}@${VM_IP}" "
             set -euo pipefail
             if [ ! -f /home/${VM_SSH_USERNAME}/app.env ]; then
               echo 'No app.env on the VM; cannot roll back safely' >&2; exit 1
             fi
             sudo mkdir -p /etc/letsencrypt
-            sudo docker login ${REGISTRY_LOGIN_SERVER} -u '${CONTAINER_REGISTRY_USERNAME}' -p '${CONTAINER_REGISTRY_PASSWORD}'
+            sudo docker login ${REGISTRY_LOGIN_SERVER} -u '${CONTAINER_REGISTRY_USERNAME}' --password-stdin
             sudo docker pull ${IMAGE_URI}
             sudo docker stop ${CONTAINER_SERVICE_NAME} || true
             sudo docker rm ${CONTAINER_SERVICE_NAME} || true
