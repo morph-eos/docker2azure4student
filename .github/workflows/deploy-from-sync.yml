@@ -41,6 +41,7 @@ jobs:
     permissions:
       contents: read
       id-token: write
+      packages: write   # lets a GITHUB_TOKEN passed as PUSH_REGISTRY_PASSWORD push to GHCR; the caller's job must grant it too
     outputs:
       sync_branch: ${{ steps.sync-branch.outputs.value }}
       image_tag: ${{ steps.manifest.outputs.image_tag }}

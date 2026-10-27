@@ -50,6 +50,9 @@ To update: change the version in the two callers, in a pull request of one line,
 - Third-party actions inside the template are pinned to commit SHAs; set *Require actions to be pinned* in your repository too.
 
 ## Upgrading
+### From v2 to v3 (`packages: write`)
+`v3.0.0` makes the deploy job ask for `packages: write`, so that a `GITHUB_TOKEN` passed as `PUSH_REGISTRY_PASSWORD` can push to GHCR. A called workflow can never hold more than its caller grants: add `packages: write` to the `permissions` of the `deploy` job in your `deploy-from-sync.yml` (see `examples/caller-deploy.yml`), or the workflow fails to start. Nothing else changes; no Terraform change, nothing to apply.
+
 ### From v2.0 to v2.1 (log volume and e-mail logs)
 `v2.1.0` changes only what monitoring does, no VM, database or network resource: the PostgreSQL diagnostic setting sends `PostgreSQLLogs` only (no session, table and transaction statistics, no copy of the platform metrics), a log alert watches the Log Analytics daily cap (80% reached), and the optional `COMMUNICATION_SERVICE_ID` repository variable routes the e-mail logs. Nothing else needs to change. The plan should show a diagnostic setting updated, one scheduled query rule created and, with the variable set, one diagnostic setting created.
 
