@@ -1,6 +1,6 @@
 # Terraform blueprint for the student-friendly Azure stack
 
-> **You do not fork or clone this repository to use it.** Your own private repository calls its deploy and rollback workflows at a version you choose (`@v1`, a release tag, or a commit SHA) and holds only your secrets and settings. How: [USING.md](USING.md).
+> **You do not fork or clone this repository to use it.** Your own private repository calls its deploy and rollback workflows at a version you choose (`@v3`, a release tag, or a commit SHA) and holds only your secrets and settings. How: [USING.md](USING.md).
 
 This repository contains modular Terraform that stands up a small Azure footprint tailored for Azure for Students subscriptions: one Linux VM that runs your containerized workload and a managed PostgreSQL Flexible Server, with an Azure Key Vault for application secrets, Application Insights / Log Analytics for observability, and automation to keep costs predictable. The accompanying GitHub Actions pipeline deploys it **secretlessly** (Azure login via OpenID Connect, no long-lived credentials) and the VM reads its runtime configuration from Key Vault using its own managed identity.
 
@@ -207,7 +207,7 @@ The job's `concurrency.group` is fixed per target environment (`deploy-<repo>-pr
 
 [`.github/workflows/rollback.yml`](.github/workflows/rollback.yml) is a reusable workflow called from a manual (`workflow_dispatch`) caller in your repository ([`examples/caller-rollback.yml`](examples/caller-rollback.yml)) for incident response. It has a `target` (either `container` or `terraform`) and an `apply` switch so you can **preview first and apply only after review**:
 
-- **Container** — redeploys a previous, immutable image tag on the VM. The container registry already stores every image; by default the rollback uses `app-image-previous` from Key Vault (the last known-good tag), or you can pass an explicit `image_tag`. The application configuration on the VM is left untouched — only the image is swapped.
+- **Container** — redeploys a previous, immutable image tag on the VM. The container registry already stores every image; by default the rollback uses `app-image-previous` from Key Vault (the last known-good tag), or you can pass an explicit `image_tag`. If you prune old images from the registry, keep the tags held by `app-image-current` and `app-image-previous` (and, on GHCR, the untagged child manifests that those tags point to, which the registry lists as versions without a tag). The application configuration on the VM is left untouched — only the image is swapped.
 - **Terraform** — re-applies the infrastructure code from a known-good `git_ref` of this template (SHA, tag or branch) against the live remote state. A saved plan is deliberately **not** used for rollback because it goes stale as soon as the state changes; the canonical, reproducible description of the infrastructure is the git commit, and the state account's versioning + soft delete are the safety net.
 
 Refer to `AUTOMATION.md` for the full automation playbook, including required secrets/variables and how the application and infrastructure repositories coordinate.
