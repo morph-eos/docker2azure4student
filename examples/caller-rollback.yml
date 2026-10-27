@@ -29,7 +29,7 @@ jobs:
     permissions:
       contents: read
       id-token: write
-    uses: morph-eos/docker2azure4student/.github/workflows/rollback.yml@v1
+    uses: morph-eos/docker2azure4student/.github/workflows/rollback.yml@v3
     with:
       target: ${{ inputs.target }}
       image_tag: ${{ inputs.image_tag }}

@@ -6,7 +6,7 @@ You do not copy this repository. Your own **private** repository holds only what
 your application repo ──pushes a bundle──▶ sync/<run>-<sha> branch of YOUR private repo
                                                    │ (push triggers YOUR caller workflow)
                                                    ▼
-                       docker2azure4student/.github/workflows/deploy-from-sync.yml@v1   (this repository, public)
+                       docker2azure4student/.github/workflows/deploy-from-sync.yml@v3   (this repository, public)
                           · checks out the Terraform and scripts of this repository at that version
                           · checks out your bundle from your sync/ branch
                           · signs in to Azure by OIDC as YOUR repository, applies, deploys the container
@@ -22,19 +22,19 @@ your application repo ──pushes a bundle──▶ sync/<run>-<sha> branch of 
 2. **Azure.** Create the app registration of the deploy identity and give it a *federated credential* for your repository and the environment `production`: subject `repo:<owner>/my-deploy:environment:production` (check the exact subject of your account in a run's token; accounts with a customised subject differ). Grant it *Contributor* on the subscription, and see the README (*Authentication*) for the rest.
 3. **Environment.** In `my-deploy`: Settings, Environments, create `production`.
 4. **Variables** (Settings, Secrets and variables, Actions, Variables): `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`. Optional: `DEPLOY_PUSH_ACTOR` (the login of the bot that pushes the bundles, `<app-slug>[bot]`: a push to `sync/**` by anyone else does not deploy), `VM_HOST_KEY` (the VM's host key line from `ssh-keyscan -t ed25519 <ip>`, taken once from a trusted network: SSH then checks the VM against it), `AZURE_PLAN_CLIENT_ID`, `COMMUNICATION_SERVICE_ID` (the resource ID of the Azure Communication Services resource that sends your e-mail: its send and delivery-status logs then go to the Log Analytics workspace).
-5. **Secrets** (same page, Secrets, **repository** secrets): `TFVARS_B64` (the whole `terraform.tfvars`, base64 on one line), `IMAGE_REGISTRY`, `IMAGE_NAME`, `REGISTRY_LOGIN_SERVER`, `CONTAINER_REGISTRY_USERNAME`, `CONTAINER_REGISTRY_PASSWORD`, `VM_SSH_USERNAME`, `VM_SSH_KEY`, and optionally `APP_ENV_VARS_B64`. What each one is: [AUTOMATION.md](AUTOMATION.md), *Required secrets*.
+5. **Secrets** (same page, Secrets, **repository** secrets): `TFVARS_B64` (the whole `terraform.tfvars`, base64 on one line), `IMAGE_REGISTRY`, `IMAGE_NAME`, `REGISTRY_LOGIN_SERVER`, `CONTAINER_REGISTRY_USERNAME`, `CONTAINER_REGISTRY_PASSWORD`, `VM_SSH_USERNAME`, `VM_SSH_KEY`, and optionally `APP_ENV_VARS_B64`. What each one is: [AUTOMATION.md](AUTOMATION.md), *Required secrets*. On GHCR the runner can push with the workflow's own token instead of a stored one: the caller passes `PUSH_REGISTRY_USERNAME` and `PUSH_REGISTRY_PASSWORD` (see `examples/caller-deploy.yml`), and `CONTAINER_REGISTRY_*` then only has to read.
 6. **First deploy.** Push a bundle branch from the application pipeline, or run the *Deploy from sync bundle* workflow by hand with the name of an existing `sync/...` branch. A rollback in *preview* mode (the `apply` switch off) is a safe first test of the credentials.
 
 ## Versions
-The template is released with tags. `v1.0.0` is an immutable release; `v1` moves to the newest `v1.x.y` (compatible changes only); a commit SHA freezes the exact code. Put the one you want after `@` in both callers:
+The template is released with tags. `v3.0.0` is an immutable release; `v3` moves to the newest `v3.x.y` (compatible changes only); a commit SHA freezes the exact code. Put the one you want after `@` in both callers:
 
 | After `@` | You get | Use it when |
 |---|---|---|
-| `v1` | every compatible update, at your next deploy | you trust the template's maintainer and want the fixes |
-| `v1.0.0` | exactly that release | you want to read the changes before taking them |
+| `v3` | every compatible update, at your next deploy | you trust the template's maintainer and want the fixes |
+| `v3.0.0` | exactly that release | you want to read the changes before taking them |
 | a full commit SHA | exactly that code, even if a tag is moved | the deployment is critical or audited |
 
-To update: change the version in the two callers, in a pull request of one line, and read the release notes first. The terraform rollback takes its `git_ref` from the **template** (a tag or commit of this repository), so a rollback to "the infrastructure of v1.0.0" is a one-word input.
+To update: change the version in the two callers, in a pull request of one line, and read the release notes first. The terraform rollback takes its `git_ref` from the **template** (a tag or commit of this repository), so a rollback to "the infrastructure of v3.0.0" is a one-word input.
 
 ## How it works
 - The called workflow runs **in your repository's context**: `vars`, the environment, the concurrency group and the OIDC subject are yours, so the Azure credential is bound to your repository, not to this one.

@@ -69,9 +69,9 @@ On macOS replace `-w0` with `| tr -d '\n'`. Paste the resulting strings into the
 2. **Restore configuration** – `terraform.tfvars` is reconstructed from `TFVARS_B64`. The remote-state settings are not a secret: the workflow derives the storage account from the subscription and passes them to `terraform init` as `-backend-config` arguments (see *Remote state* in the README).
 3. **Terraform plan/apply** – `hashicorp/setup-terraform` installs Terraform, the workflow logs into Azure via `azure/login`, and `terraform apply -auto-approve` provisions/updates the stack. Before applying, the script `scripts/tfvars_meta.py` extracts metadata (subscription ID, environment name, flags) used to import existing resources when needed.
 4. **Outputs + NSG window** – The pipeline reads `vm_public_ip` and `database_fqdn`. It temporarily adds an NSG rule (`gha-temp-<run-id>`) that allows SSH from the runner so Docker commands can be executed remotely; the rule is deleted at the end regardless of success.
-5. **Build & push image** – The runner logs into the container registry, builds `sync-bundle/Dockerfile`, tags the image as `${IMAGE_REGISTRY}/${IMAGE_NAME}:${imageTag}`, and pushes it.
+5. **Build & push image** – The runner logs into the container registry (with `PUSH_REGISTRY_*` when the caller passes them, otherwise with `CONTAINER_REGISTRY_*`), builds `sync-bundle/Dockerfile`, tags the image as `${IMAGE_REGISTRY}/${IMAGE_NAME}:${imageTag}`, and pushes it.
 6. **Prepare runtime secrets** – `APP_ENV_VARS_B64` is decoded into `app.env`. The workflow appends a `POSTGRES_CONNECTION_STRING` (built from Terraform outputs) so the container can reach the managed database.
-7. **SSH deployment** – Using the provided private key, the workflow ensures Docker is installed on the VM, copies `app.env`, logs into the same registry from the VM, pulls the new image, and runs it as `${CONTAINER_SERVICE_NAME}` mapping ports `80->8080` and `443->8081`. `/etc/letsencrypt` is bind-mounted so certificates survive container restarts.
+7. **SSH deployment** – Using the provided private key, the workflow ensures Docker is installed on the VM, copies `app.env`, logs into the same registry from the VM (the password goes in on stdin, never on the command line), pulls the new image, and runs it as `${CONTAINER_SERVICE_NAME}` mapping ports `80->8080` and `443->8081`. `/etc/letsencrypt` is bind-mounted so certificates survive container restarts.
 8. **Cleanup** – The temporary NSG rule is deleted even on failure. A dedicated `cleanup` job removes the `sync/...` branch via `actions/github-script` so bundles never linger in the public history.
 
 ### Runtime environment variables
@@ -103,6 +103,7 @@ The Let's Encrypt certificate lives in `/etc/letsencrypt` on the VM, bind-mounte
 - Store secrets in a GitHub Environment (`production`, limited to `main` and `sync/**`), not in the repository; add required reviewers where the plan offers them, otherwise restrict who can create `sync/**` branches (README, *Settings of the private copy*).
 - The remote state is shared with the CLI: run Terraform locally only against the same backend (README, *Remote state*), never with a local state next to CI's.
 - Rotate registry credentials, the GitHub App key and app secrets regularly; Azure already uses OIDC with federated credentials.
+- On GHCR, push with the workflow's own token (`PUSH_REGISTRY_*`, which needs `packages: write` in the caller) and give the VM a classic personal access token with only `read:packages` and an expiration. Fine-grained tokens and GitHub App tokens cannot access packages. The package must list the calling repository under *Manage Actions access* with the Write role.
 - Add post-deploy smoke tests (curl health check, database migrations) before the workflow tears down the previous container.
 - Monitor the Automation account runbooks (snapshot, cleanup, VM schedule, DB backup) through alerts so missed jobs are detected early.
 
